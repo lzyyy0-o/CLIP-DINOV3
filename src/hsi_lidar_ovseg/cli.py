@@ -116,10 +116,23 @@ def _build_visual_encoder(
         raise ConfigError(f"编码器工厂必须返回 torch.nn.Module: {config.factory}")
     _load_local_weights(backbone, config.checkpoint)
     frozen = force_frozen or config.frozen
+    unfreeze_blocks = 0 if force_frozen else config.unfreeze_blocks
     blocks = tuple(config.feature_blocks)
     if config.kind == "hypersigma":
-        return HyperSigmaAdapter(backbone, blocks, feature_dim, frozen=frozen)  # type: ignore[arg-type]
-    return DinoV2Adapter(backbone, blocks, feature_dim, frozen=frozen)  # type: ignore[arg-type]
+        return HyperSigmaAdapter(  # type: ignore[arg-type]
+            backbone,
+            blocks,
+            feature_dim,
+            frozen=frozen,
+            unfreeze_blocks=unfreeze_blocks,
+        )
+    return DinoV2Adapter(  # type: ignore[arg-type]
+        backbone,
+        blocks,
+        feature_dim,
+        frozen=frozen,
+        unfreeze_blocks=unfreeze_blocks,
+    )
 
 
 def _build_model(config: ExperimentConfig, hsi_bands: int) -> HSILidarOVSegmentor:

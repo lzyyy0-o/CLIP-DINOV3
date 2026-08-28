@@ -51,4 +51,3 @@ train:
   gradient_clip: 1.0
   amp: true
   device: cuda
-

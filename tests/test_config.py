@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from hsi_lidar_ovseg.config import ConfigError, DataConfig, load_config
+from hsi_lidar_ovseg.config import ConfigError, DataConfig, EncoderConfig, load_config
 
 
 def _valid_data_config(**overrides: object) -> DataConfig:
@@ -145,4 +145,27 @@ def test_train_config_rejects_overlap_not_smaller_than_tile(tmp_path: Path) -> N
     path.write_text(yaml.safe_dump(values), encoding="utf-8")
 
     with pytest.raises(ConfigError, match="overlap"):
+        load_config(path, check_files=False)
+
+
+def test_encoder_config_rejects_frozen_partial_unfreezing() -> None:
+    with pytest.raises(ConfigError, match="unfreeze_blocks"):
+        EncoderConfig(
+            kind="dinov2",
+            checkpoint=Path("weights.pt"),
+            factory="package:create_model",
+            frozen=True,
+            unfreeze_blocks=2,
+        )
+
+
+def test_model_config_rejects_hugging_face_hub_clip_name(tmp_path: Path) -> None:
+    values = _valid_config_dict()
+    model = values["model"]
+    assert isinstance(model, dict)
+    model["clip_model_name"] = "hf-hub:organization/model"
+    path = tmp_path / "remote-clip.yaml"
+    path.write_text(yaml.safe_dump(values), encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="hf-hub"):
         load_config(path, check_files=False)

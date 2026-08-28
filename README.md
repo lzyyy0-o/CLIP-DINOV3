@@ -115,6 +115,7 @@ model:
     checkpoint: weights/hypersigma.pt
     feature_blocks: [2, 5, 8, 11]
     frozen: false
+    unfreeze_blocks: 2
   lidar_encoder:
     kind: dinov2
     factory: third_party.dinov2:create_model
@@ -137,6 +138,8 @@ model:
 ```
 
 工厂格式是 `package.module:callable`。工厂应返回已构造但未加载权重的 `torch.nn.Module`；本项目随后严格加载本地状态字典。DINOv2 风格主干需实现 `get_intermediate_layers`，HyperSIGMA 主干需实现 `forward_intermediates` 或同名 DINOv2 接口，并公开 `patch_size` 与 `embed_dim`/`num_features`。
+
+`clip_model_name` 必须是 OpenCLIP 本地注册的模型结构；为防止隐式联网，配置会拒绝 `hf-hub:` 模型名。自定义视觉工厂同样不得在构造过程中下载权重或配置。
 
 ## 训练、恢复与评估
 

@@ -16,8 +16,17 @@ class HyperSigmaAdapter(_TokenPyramidAdapter):
         feature_blocks: tuple[int, int, int, int],
         feature_dim: int,
         frozen: bool = True,
+        unfreeze_blocks: int = 0,
     ) -> None:
-        super().__init__(backbone, feature_blocks, feature_dim, frozen=frozen)
+        if frozen and unfreeze_blocks:
+            raise ValueError("frozen=true 时 unfreeze_blocks 必须为 0")
+        super().__init__(
+            backbone,
+            feature_blocks,
+            feature_dim,
+            frozen=frozen,
+            unfreeze_blocks=unfreeze_blocks,
+        )
         has_forward = callable(getattr(backbone, "forward_intermediates", None))
         has_get = callable(getattr(backbone, "get_intermediate_layers", None))
         if not has_forward and not has_get:

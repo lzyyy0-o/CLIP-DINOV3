@@ -114,6 +114,8 @@ class EncoderConfig:
             raise ConfigError("feature_blocks 必须包含四个严格递增的层编号")
         if self.unfreeze_blocks < 0:
             raise ConfigError("unfreeze_blocks 不得为负数")
+        if self.frozen and self.unfreeze_blocks:
+            raise ConfigError("frozen=true 时 unfreeze_blocks 必须为 0")
         if self.kind != "native" and self.checkpoint is None:
             raise ConfigError(f"encoder.kind={self.kind} 时必须提供 checkpoint")
         if self.kind != "native" and not self.factory:
@@ -150,6 +152,8 @@ class ModelConfig:
             raise ConfigError("text_dim 必须为正整数")
         if not self.clip_model_name.strip():
             raise ConfigError("clip_model_name 不能为空")
+        if self.clip_model_name.lower().startswith("hf-hub:"):
+            raise ConfigError("clip_model_name 不得使用可能隐式联网的 hf-hub: 模型")
         if not self.prompt_templates or any(
             template.count("{}") != 1 for template in self.prompt_templates
         ):

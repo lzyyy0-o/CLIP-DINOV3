@@ -38,6 +38,22 @@ def _backbone_feature_dim(backbone: nn.Module) -> int:
     raise ValueError("主干必须公开正整数 embed_dim、num_features 或 feature_dim")
 
 
+def _backbone_blocks(backbone: nn.Module) -> tuple[nn.Module, ...]:
+    candidates = [
+        getattr(backbone, "blocks", None),
+        getattr(backbone, "layers", None),
+    ]
+    encoder = getattr(backbone, "encoder", None)
+    if encoder is not None:
+        candidates.append(getattr(encoder, "layer", None))
+    for candidate in candidates:
+        if isinstance(candidate, (nn.ModuleList, nn.Sequential, list, tuple)):
+            blocks = tuple(candidate)
+            if blocks and all(isinstance(block, nn.Module) for block in blocks):
+                return blocks
+    raise ValueError("设置 unfreeze_blocks 时主干必须公开 blocks、layers 或 encoder.layer")
+
+
 class _TokenPyramidAdapter(nn.Module):
     out_strides = (4, 8, 16, 32)
 
@@ -48,6 +64,7 @@ class _TokenPyramidAdapter(nn.Module):
         feature_dim: int,
         *,
         frozen: bool,
+        unfreeze_blocks: int,
     ) -> None:
         super().__init__()
         if len(feature_blocks) != 4:
@@ -58,15 +75,25 @@ class _TokenPyramidAdapter(nn.Module):
         self.feature_blocks = feature_blocks
         self.feature_dim = feature_dim
         self.frozen = frozen
+        self.unfreeze_blocks = unfreeze_blocks
         self.patch_size = _backbone_patch_size(backbone)
         input_dim = _backbone_feature_dim(backbone)
         self.out_channels = (feature_dim,) * 4
         self.projections = nn.ModuleList(
             nn.Conv2d(input_dim, feature_dim, 1) for _ in feature_blocks
         )
+        self._frozen_blocks: tuple[nn.Module, ...] = ()
         if frozen:
             self.backbone.requires_grad_(False)
             self.backbone.eval()
+        elif unfreeze_blocks:
+            blocks = _backbone_blocks(backbone)
+            if unfreeze_blocks > len(blocks):
+                raise ValueError(f"unfreeze_blocks={unfreeze_blocks} 超过主干块数 {len(blocks)}")
+            self.backbone.requires_grad_(False)
+            for block in blocks[-unfreeze_blocks:]:
+                block.requires_grad_(True)
+            self._frozen_blocks = blocks[:-unfreeze_blocks]
 
     def _extract(self, inputs: Tensor) -> tuple[Tensor, ...]:
         raise NotImplementedError
@@ -115,6 +142,9 @@ class _TokenPyramidAdapter(nn.Module):
         super().train(mode)
         if self.frozen:
             self.backbone.eval()
+        else:
+            for block in self._frozen_blocks:
+                block.eval()
         return self
 
 
@@ -127,8 +157,17 @@ class DinoV2Adapter(_TokenPyramidAdapter):
         feature_blocks: tuple[int, int, int, int],
         feature_dim: int,
         frozen: bool = True,
+        unfreeze_blocks: int = 0,
     ) -> None:
-        super().__init__(backbone, feature_blocks, feature_dim, frozen=frozen)
+        if frozen and unfreeze_blocks:
+            raise ValueError("frozen=true 时 unfreeze_blocks 必须为 0")
+        super().__init__(
+            backbone,
+            feature_blocks,
+            feature_dim,
+            frozen=frozen,
+            unfreeze_blocks=unfreeze_blocks,
+        )
         if not callable(getattr(backbone, "get_intermediate_layers", None)):
             raise ValueError("DINOv2 主干必须实现 get_intermediate_layers")
 
