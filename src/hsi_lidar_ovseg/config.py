@@ -116,6 +116,8 @@ class EncoderConfig:
             raise ConfigError("unfreeze_blocks 不得为负数")
         if self.kind != "native" and self.checkpoint is None:
             raise ConfigError(f"encoder.kind={self.kind} 时必须提供 checkpoint")
+        if self.kind != "native" and not self.factory:
+            raise ConfigError(f"encoder.kind={self.kind} 时必须提供 factory")
 
     def validate_files(self) -> None:
         """Require external checkpoints to exist."""
@@ -132,6 +134,11 @@ class ModelConfig:
     lidar_encoder: EncoderConfig
     teacher_encoder: EncoderConfig
     clip_checkpoint: Path | None
+    clip_model_name: str = "ViT-B-32"
+    prompt_templates: tuple[str, ...] = (
+        "a remote sensing image of {}",
+        "an aerial view of {}",
+    )
     feature_dim: int = 256
     text_dim: int = 512
     terrain_window: int = 9
@@ -141,6 +148,12 @@ class ModelConfig:
             raise ConfigError("feature_dim 必须为正整数")
         if self.text_dim <= 0:
             raise ConfigError("text_dim 必须为正整数")
+        if not self.clip_model_name.strip():
+            raise ConfigError("clip_model_name 不能为空")
+        if not self.prompt_templates or any(
+            template.count("{}") != 1 for template in self.prompt_templates
+        ):
+            raise ConfigError("每个 prompt_templates 项必须且只能包含一个 {} 占位符")
         if self.terrain_window <= 0 or self.terrain_window % 2 == 0:
             raise ConfigError("terrain_window 必须为正奇数")
 
@@ -313,6 +326,10 @@ def _decode_model(raw: object) -> ModelConfig:
     values["clip_checkpoint"] = _path(
         values.get("clip_checkpoint"), "model.clip_checkpoint", optional=True
     )
+    if "prompt_templates" in values:
+        values["prompt_templates"] = _tuple(
+            values["prompt_templates"], "model.prompt_templates", str
+        )
     try:
         return ModelConfig(**values)
     except TypeError as error:

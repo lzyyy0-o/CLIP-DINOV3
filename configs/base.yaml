@@ -1,0 +1,54 @@
+name: native_offline_template
+seed: 7
+output_dir: outputs/native_offline_template
+
+data:
+  name: template
+  hsi_path: data/template/hsi.npy
+  lidar_path: data/template/lidar.npy
+  labels_path: data/template/labels.npy
+  train_mask_path: data/template/train_mask.npy
+  test_mask_path: data/template/test_mask.npy
+  hsi_key: null
+  lidar_key: null
+  labels_key: null
+  train_mask_key: null
+  test_mask_key: null
+  class_names: [class one, class two, class three]
+  seen_class_ids: [1, 2]
+  unseen_class_ids: [3]
+  pseudo_rgb_indices: [2, 1, 0]
+
+model:
+  hsi_encoder: {kind: native, checkpoint: null}
+  lidar_encoder: {kind: native, checkpoint: null}
+  teacher_encoder: {kind: native, checkpoint: null, frozen: true}
+  clip_checkpoint: null
+  clip_model_name: ViT-B-32
+  prompt_templates:
+    - "a remote sensing image of {}"
+    - "an aerial view of {}"
+  feature_dim: 128
+  text_dim: 256
+  terrain_window: 9
+
+loss:
+  teacher_weight: 1.0
+  cross_weight: 0.5
+  gate_weight: 0.01
+  private_weight: 0.01
+  temperature: 0.1
+
+train:
+  tile_size: 224
+  overlap: 56
+  min_seen_pixels: 1
+  batch_size: 2
+  epochs: 20
+  learning_rate: 0.0001
+  backbone_learning_rate: 0.00001
+  weight_decay: 0.01
+  gradient_clip: 1.0
+  amp: true
+  device: cuda
+
