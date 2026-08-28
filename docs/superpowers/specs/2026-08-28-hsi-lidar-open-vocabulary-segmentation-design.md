@@ -1,71 +1,71 @@
-# HSI–LiDAR Open-Vocabulary Segmentation Design
+# HSI–LiDAR 开放词汇语义分割设计
 
-## 1. Objective
+## 1. 目标
 
-Build a standalone PyTorch project for open-vocabulary semantic segmentation of the co-registered hyperspectral and LiDAR rasters in Houston 2013, Trento, and MUUFL. The system shall preserve HSI spectral information, preserve LiDAR geometric information, align only their shared semantic representations, and classify dense pixels by similarity to frozen CLIP text prototypes.
+构建一个独立的 PyTorch 项目，用于对 Houston 2013、Trento 和 MUUFL 中已配准的高光谱与 LiDAR 栅格数据进行开放词汇语义分割。系统应保留 HSI 的光谱信息和 LiDAR 的几何信息，只对齐二者共享的语义表示，并通过与冻结的 CLIP 文本原型计算相似度，对密集像素进行分类。
 
-The project must train and evaluate without depending on Detectron2. Pretrained HyperSIGMA, DINOv2, and CLIP weights are supplied as local paths; the training and test commands must never download weights implicitly.
+项目必须能够在不依赖 Detectron2 的情况下完成训练和评估。预训练的 HyperSIGMA、DINOv2 和 CLIP 权重均通过本地路径提供；任何训练或测试命令都不得隐式下载权重。
 
-## 2. Scope
+## 2. 范围
 
-The first release includes:
+首个版本包括：
 
-- dataset adapters for `.mat`, `.npy`, and `.npz` scene files;
-- dataset specifications for Houston 2013, Trento, and MUUFL;
-- leakage-free normalization, paired cropping, augmentation, and sliding-window inference;
-- a visible-band pseudo-RGB semantic teacher;
-- an HSI encoder interface with a HyperSIGMA adapter and a self-contained lightweight spectral-spatial encoder for offline tests and ablations;
-- a LiDAR terrain adapter followed by a DINOv2 encoder interface;
-- multi-level semantic alignment, gated HSI–LiDAR fusion, and a dense CLIP-space decoder;
-- supervised, contrastive, and regularization losses;
-- open-vocabulary seen/unseen class splits configured explicitly per experiment;
-- training, evaluation, checkpointing, and metric reporting commands;
-- unit and integration tests that use synthetic tensors and do not require pretrained weights or network access.
+- 针对 `.mat`、`.npy` 和 `.npz` 场景文件的数据集适配器；
+- Houston 2013、Trento 和 MUUFL 的数据集配置；
+- 无数据泄漏的归一化、配对裁剪、数据增强和滑窗推理；
+- 基于可见光波段伪 RGB 的语义教师；
+- 包含 HyperSIGMA 适配器的 HSI 编码器接口，以及用于离线测试和消融实验的自包含轻量光谱—空间编码器；
+- LiDAR 地形适配器及其后的 DINOv2 编码器接口；
+- 多层语义对齐、门控 HSI–LiDAR 融合和密集 CLIP 空间解码器；
+- 监督损失、对比损失和正则化损失；
+- 在每个实验中显式配置的开放词汇已见类/未见类划分；
+- 训练、评估、检查点和指标报告命令；
+- 使用合成张量、不依赖预训练权重或网络访问的单元测试和集成测试。
 
-The release does not include dataset files, pretrained checkpoints, automatic model downloads, point-cloud processing, distributed training, or reproduction claims for unpublished results.
+首个版本不包括数据集文件、预训练检查点、模型自动下载、点云处理、分布式训练，也不对尚未实际复现的结果作出复现声明。
 
-## 3. Considered Approaches
+## 3. 备选方案
 
-### 3.1 Standalone PyTorch project — selected
+### 3.1 独立 PyTorch 项目——采用
 
-Use a small, typed package with explicit interfaces for data readers, encoders, fusion, losses, and training. This keeps the scientific components testable, avoids Detectron2 version coupling, and permits pretrained models to be replaced independently.
+使用规模适中、带类型标注的包，并为数据读取器、编码器、融合模块、损失和训练流程定义明确接口。这样可以独立测试各个科研组件，避免 Detectron2 版本耦合，并允许独立替换预训练模型。
 
-### 3.2 MM-OVSeg/Detectron2 fork — rejected
+### 3.2 基于 MM-OVSeg/Detectron2 改造——不采用
 
-This would reuse the original training shell and decoder structure, but it would bring large framework dependencies and RGB-centric dataset assumptions into a project whose input contract is fundamentally different.
+该方案可以复用原始训练入口和解码器结构，但也会把庞大的框架依赖以及面向 RGB 的数据集假设带入本项目，而本项目的输入契约与其存在根本差异。
 
-### 3.3 Lightweight closed-set classifier — rejected
+### 3.3 轻量闭集分类器——不采用
 
-A patch classifier would be simpler and useful as a baseline, but it would not produce full-resolution segmentation maps or exercise the CLIP text space required by the stated objective.
+基于图像块的分类器更加简单，也适合作为基线，但无法生成全分辨率分割图，也不能完整验证本项目所要求的 CLIP 文本空间。
 
-## 4. System Architecture
+## 4. 系统架构
 
-For an HSI tensor `H` with shape `[N, B, H, W]` and a co-registered LiDAR tensor `L` with shape `[N, C_l, H, W]`, the model uses three visual paths:
+对于形状为 `[N, B, H, W]` 的 HSI 张量 `H`，以及与其配准、形状为 `[N, C_l, H, W]` 的 LiDAR 张量 `L`，模型使用三条视觉路径：
 
-1. **Semantic teacher:** dataset-configured visible wavelengths are selected from `H`, percentile-stretched into pseudo-RGB, and passed through a frozen DINOv2 encoder. This path supplies a modality-stable visual semantic target.
-2. **HSI student:** the complete HSI cube is passed through HyperSIGMA. A lightweight native spectral-spatial encoder implements the same feature-pyramid protocol for tests, ablations, and installations without HyperSIGMA.
-3. **LiDAR student:** the LiDAR raster is converted to three terrain channels—normalized height, local relative height, and slope magnitude—and passed through DINOv2.
+1. **语义教师：**从 `H` 中选取数据集配置指定的可见光波长，经过百分位拉伸生成伪 RGB，再输入冻结的 DINOv2 编码器。该路径提供跨模态稳定的视觉语义目标。
+2. **HSI 学生：**完整 HSI 数据立方体输入 HyperSIGMA。轻量原生光谱—空间编码器实现相同的特征金字塔协议，用于测试、消融实验和未安装 HyperSIGMA 的环境。
+3. **LiDAR 学生：**将 LiDAR 栅格转换为三个地形通道——归一化高度、局部相对高度和坡度幅值——再输入 DINOv2。
 
-Each encoder returns four feature maps at strides 4, 8, 16, and 32. Adapter projections map every level to `feature_dim=256`. If a ViT exposes equal-resolution intermediate tokens, the adapter reshapes tokens to a spatial grid and constructs the required pyramid with learned resampling blocks.
+每个编码器返回步长为 4、8、16 和 32 的四层特征图。适配器投影层将各层通道统一映射为 `feature_dim=256`。如果 ViT 只提供分辨率相同的中间令牌，适配器先将令牌还原为空间网格，再通过可学习的重采样模块构建所需的特征金字塔。
 
-The model aligns projected HSI and LiDAR features with the frozen teacher at middle and high levels. A lower-weight symmetric HSI–LiDAR alignment term encourages common semantics without forcing equality of modality-private features. Per-level gates fuse the two modalities:
+模型在中层和高层将投影后的 HSI、LiDAR 特征与冻结教师对齐。权重较低的对称 HSI–LiDAR 对齐项用于鼓励共享语义，但不强制模态私有特征完全相同。每一层使用门控机制融合两个模态：
 
-`F_k = sigmoid(G_k([H_k, L_k])) * H_k + (1 - sigmoid(G_k([H_k, L_k]))) * L_k`.
+`F_k = sigmoid(G_k([H_k, L_k])) * H_k + (1 - sigmoid(G_k([H_k, L_k]))) * L_k`。
 
-An FPN-style decoder upsamples and combines fused levels into a dense embedding map. The map is L2-normalized and compared with L2-normalized CLIP text prototypes. The similarity temperature is a bounded learnable scalar. Text prototypes are averages over configured prompt templates and are cached for an evaluation run.
+FPN 风格的解码器对融合后的多层特征进行上采样和组合，生成密集嵌入图。像素嵌入和 CLIP 文本原型分别进行 L2 归一化后计算相似度。相似度温度是有界的可学习标量。文本原型由配置中的多个提示模板取平均得到，并在一次评估运行期间缓存。
 
-## 5. Stable Interfaces
+## 5. 稳定接口
 
-The implementation exposes the following typed contracts:
+实现对外暴露以下带类型标注的契约：
 
 ```python
 @dataclass(frozen=True)
 class SceneArrays:
-    hsi: np.ndarray          # [height, width, bands], float32
-    lidar: np.ndarray        # [height, width, channels], float32
-    labels: np.ndarray       # [height, width], int64; 0 is ignored
-    train_mask: np.ndarray   # [height, width], bool
-    test_mask: np.ndarray    # [height, width], bool
+    hsi: np.ndarray          # [高度, 宽度, 波段数]，float32
+    lidar: np.ndarray        # [高度, 宽度, 通道数]，float32
+    labels: np.ndarray       # [高度, 宽度]，int64；标签 0 被忽略
+    train_mask: np.ndarray   # [高度, 宽度]，bool
+    test_mask: np.ndarray    # [高度, 宽度]，bool
 
 class PyramidEncoder(Protocol):
     out_channels: tuple[int, int, int, int]
@@ -81,86 +81,86 @@ class SegmentationOutput:
     gates: tuple[torch.Tensor, ...]
 ```
 
-Dataset-specific file names, array keys, band wavelengths or pseudo-RGB indices, class names, class IDs, and seen/unseen splits belong in YAML configuration. Model code must not contain dataset-specific paths or MATLAB keys.
+数据集特有的文件名、数组键、波段波长或伪 RGB 波段索引、类别名称、类别编号以及已见类/未见类划分均写入 YAML 配置。模型代码中不得包含数据集特有路径或 MATLAB 数组键。
 
-## 6. Pretrained Backbone Integration
+## 6. 预训练主干集成
 
 ### 6.1 HyperSIGMA
 
-`HyperSigmaAdapter` accepts an already constructed `torch.nn.Module` or constructs the official model through a configured Python factory path. A local checkpoint is mandatory when `encoder.kind=hypersigma`. State-dict loading reports missing and unexpected keys and rejects incompatible patch embeddings. The adapter extracts configured intermediate blocks and converts them to the common feature pyramid.
+`HyperSigmaAdapter` 可以接收已经构造好的 `torch.nn.Module`，也可以通过配置的 Python 工厂路径构建官方模型。当 `encoder.kind=hypersigma` 时必须提供本地检查点。加载状态字典时应报告缺失键和意外键，并拒绝不兼容的图像块嵌入。适配器从配置指定的中间层提取特征，并将其转换为统一的特征金字塔。
 
 ### 6.2 DINOv2
 
-`DinoV2Adapter` builds a configured local DINOv2 implementation and loads a local checkpoint. The semantic-teacher instance is always frozen and remains in evaluation mode. The LiDAR instance starts frozen except for the terrain adapter and projection heads; staged unfreezing of its final blocks is controlled by configuration.
+`DinoV2Adapter` 构建配置指定的本地 DINOv2 实现，并加载本地检查点。语义教师实例始终冻结并保持评估模式。LiDAR 实例在初始阶段仅训练地形适配器和投影头，其最后若干主干层的分阶段解冻由配置控制。
 
 ### 6.3 CLIP
 
-`ClipTextEncoder` loads a local OpenCLIP-compatible checkpoint and tokenizer assets. It returns normalized text embeddings for class names and templates. Tokenization and text encoding are isolated behind an interface so tests can inject deterministic embeddings.
+`ClipTextEncoder` 加载与 OpenCLIP 兼容的本地检查点和分词器资源，针对类别名称和提示模板返回归一化的文本嵌入。分词和文本编码被隔离在独立接口之后，以便测试注入确定性的文本嵌入。
 
-No pretrained adapter may fall back silently to random initialization. The self-contained native encoders are selected only by an explicit `kind=native` configuration.
+任何预训练适配器都不得静默退化为随机初始化。只有显式设置 `kind=native` 时，才能选择项目自带的原生编码器。
 
-## 7. Dataset and Preprocessing Contract
+## 7. 数据集与预处理契约
 
-All three benchmarks are treated as co-registered raster scenes. Array orientation is normalized once at load time to channel-last NumPy arrays and converted to channel-first tensors only in the dataset.
+三个基准都按已配准的栅格场景处理。数组在加载时统一转换为通道后置的 NumPy 格式，并且只在数据集模块中转换为通道前置张量。
 
-- HSI non-finite values are rejected before statistics are computed.
-- Per-band mean and standard deviation use training-mask pixels only and are stored with the run artifacts.
-- LiDAR is normalized from training-mask pixels with robust median and interquartile scale; a small epsilon protects constant rasters.
-- Local relative height uses a configurable odd window and reflection padding.
-- Slope is the magnitude of centered finite differences in normalized height.
-- Pseudo-RGB uses configured band indices or nearest configured wavelengths and independent 2nd–98th percentile stretching from training pixels.
-- Label `0` is ignored. Positive labels must be contiguous after an explicit remapping defined by the dataset configuration.
-- Spatial augmentations are sampled once and applied identically to HSI, LiDAR, labels, and masks. Spectral jitter applies only to HSI; height jitter applies only to LiDAR.
+- 计算统计量前拒绝包含非有限值的 HSI 数据。
+- 每个波段的均值和标准差只使用训练掩码覆盖的像素计算，并随运行产物一起保存。
+- LiDAR 使用训练掩码像素的中位数和四分位距进行稳健归一化；通过一个很小的 `epsilon` 保护常量栅格。
+- 局部相对高度使用可配置的奇数窗口和反射填充计算。
+- 坡度定义为归一化高度中心差分的幅值。
+- 伪 RGB 使用配置的波段索引或距离目标波长最近的波段，并根据训练像素分别执行第 2–98 百分位拉伸。
+- 标签 `0` 被忽略。正标签必须在数据集配置显式重映射后保持连续。
+- 所有空间增强只采样一次，并以相同参数应用于 HSI、LiDAR、标签和掩码。光谱扰动只应用于 HSI，高度扰动只应用于 LiDAR。
 
-Training samples are paired tiles of 224×224 pixels. Sampling ensures a configurable minimum number of labeled seen-class pixels. Validation and test use sliding windows with 56-pixel overlap and weighted overlap averaging. Images smaller than a tile are reflection-padded; logits are cropped to the original size.
+训练样本为 224×224 像素的配对图块。采样过程保证图块内至少包含配置指定数量的已见类标注像素。验证和测试使用重叠 56 像素的滑动窗口，并对重叠区域加权平均。小于图块尺寸的图像使用反射填充，最终预测裁剪回原始尺寸。
 
-The repository provides example configuration files with class names and input conventions. File paths and array keys are deliberately explicit because public copies of these datasets use different names and MATLAB keys.
+仓库提供包含类别名称和输入约定的示例配置。由于这些数据集的公开副本具有不同文件名和 MATLAB 数组键，文件路径和数组键必须显式填写。
 
-## 8. Open-Vocabulary Protocol
+## 8. 开放词汇协议
 
-Every experiment config declares `seen_class_ids` and `unseen_class_ids`. Training segmentation loss is computed only for pixels belonging to seen classes. Alignment losses may use every spatial pixel because they do not consume ground-truth class IDs.
+每个实验配置都声明 `seen_class_ids` 和 `unseen_class_ids`。训练分割损失只对已见类像素计算。对齐损失不使用真实类别编号，因此可以使用所有有效空间像素。
 
-Evaluation reports:
+评估报告以下指标：
 
-- mean IoU and mean class accuracy over all configured classes;
-- seen-class mIoU;
-- unseen-class mIoU;
-- harmonic mean of seen and unseen mIoU;
-- overall pixel accuracy;
-- per-class IoU.
+- 所有已配置类别的平均交并比和平均类别准确率；
+- 已见类平均交并比；
+- 未见类平均交并比；
+- 已见类与未见类平均交并比的调和平均值；
+- 总体像素准确率；
+- 每类别交并比。
 
-Example configs use deterministic research splits and label them as project defaults, not community-standard splits. Changing a split requires only YAML edits and is recorded in the resolved run configuration.
+示例配置使用确定性的研究划分，并明确标记为项目默认划分，而不是社区标准划分。修改类别划分只需编辑 YAML，解析后的完整配置会记录在运行产物中。
 
-## 9. Losses
+## 9. 损失函数
 
-The total loss is:
+总损失为：
 
-`L = L_seg + lambda_teacher * (L_hsi_teacher + L_lidar_teacher) + lambda_cross * L_hsi_lidar + lambda_gate * L_gate + lambda_private * L_private`.
+`L = L_seg + lambda_teacher * (L_hsi_teacher + L_lidar_teacher) + lambda_cross * L_hsi_lidar + lambda_gate * L_gate + lambda_private * L_private`。
 
-- `L_seg` is masked pixelwise cross-entropy over seen-class text logits.
-- Alignment losses use normalized region-pooled tokens and a symmetric InfoNCE objective. Positives share geolocation. Negatives within a configurable spatial exclusion radius are removed to reduce false negatives caused by neighboring pixels.
-- `L_gate` discourages gate saturation during warm-up by penalizing deviation of the batch mean from 0.5.
-- `L_private` decorrelates optional modality-private projections from the shared fused representation.
+- `L_seg` 是针对已见类文本相似度分数计算的带掩码逐像素交叉熵。
+- 对齐损失使用归一化的区域池化令牌和对称 InfoNCE 目标。同一地理位置构成正样本对；配置空间排除半径内的负样本会被移除，以减少相邻像素形成的伪负样本。
+- `L_gate` 在训练预热阶段通过惩罚批次门控均值对 0.5 的偏离，抑制门控过早饱和。
+- `L_private` 约束可选的模态私有投影与共享融合表示去相关。
 
-Each loss accepts a validity mask and returns a finite scalar. An empty supervised mask is a data error, not a zero loss.
+每个损失函数都接收有效性掩码并返回有限标量。监督掩码为空属于数据错误，不允许返回零损失掩盖问题。
 
-## 10. Training and Checkpointing
+## 10. 训练与检查点
 
-The CLI has `train`, `evaluate`, and `validate-config` commands. Configuration is loaded from YAML into validated dataclasses; unknown keys are errors.
+命令行接口包含 `train`、`evaluate` 和 `validate-config` 三个子命令。配置从 YAML 加载到经过校验的数据类中，未知配置键直接报错。
 
-Training uses AdamW, separate learning-rate groups for adapters/decoder and unfrozen backbone blocks, gradient clipping, automatic mixed precision when CUDA is available, deterministic seeding, and periodic validation. Checkpoints contain model state, optimizer state, scheduler state, scaler state, epoch, global step, normalization statistics, resolved configuration, class names, and seen/unseen splits.
+训练使用 AdamW，并为适配器/解码器和已解冻的主干层设置不同学习率组；同时支持梯度裁剪、CUDA 可用时的自动混合精度、确定性随机种子和周期性验证。检查点保存模型、优化器、学习率调度器、梯度缩放器、当前轮次、全局步数、归一化统计量、解析后的完整配置、类别名称以及已见类/未见类划分。
 
-Resume rejects checkpoints whose class list, split, spectral band count, or model dimensions conflict with the current configuration. Best checkpoints are selected by harmonic seen/unseen mIoU when unseen classes exist, otherwise by overall mIoU.
+恢复训练时，如果检查点中的类别列表、类别划分、光谱波段数或模型维度与当前配置冲突，则拒绝加载。存在未见类时，最佳检查点依据已见类和未见类平均交并比的调和平均值选择；否则依据总体平均交并比选择。
 
-## 11. Error Handling and Diagnostics
+## 11. 错误处理与诊断
 
-Configuration validation fails early for missing files, missing array keys, invalid class IDs, overlapping seen/unseen sets, absent pseudo-RGB bands, even terrain windows, invalid tile overlap, and missing required local checkpoints.
+配置校验应尽早发现以下错误：文件缺失、数组键缺失、类别编号非法、已见类与未见类集合重叠、伪 RGB 波段缺失、地形窗口为偶数、图块重叠非法，以及必须提供的本地检查点缺失。
 
-Runtime validation checks paired spatial dimensions, feature-pyramid lengths, channel counts, non-finite model outputs, and text/label class-count consistency. Error messages identify the dataset, field, expected value, and observed value.
+运行时校验包括：成对数据空间尺寸一致、特征金字塔层数正确、通道数正确、模型输出不存在非有限值，以及文本类别数与标签类别数一致。错误信息必须指出数据集、字段、期望值和实际值。
 
-Training logs total and component losses, learning rates, gate means, temperature, validation metrics, and checkpoint paths. The implementation uses the Python `logging` module and never relies on print statements inside library modules.
+训练日志记录总损失及各分量、学习率、门控均值、温度、验证指标和检查点路径。库模块统一使用 Python `logging`，不得在库代码中依赖 `print` 输出。
 
-## 12. Project Structure
+## 12. 项目结构
 
 ```text
 HSI-LIDAR/
@@ -209,35 +209,35 @@ HSI-LIDAR/
     └── test_training_smoke.py
 ```
 
-Files are divided by responsibility. External model peculiarities remain inside their adapters; data formats remain inside data modules; the core segmentation model depends only on typed protocols.
+文件按职责划分。外部模型的特殊处理被限制在各自适配器内，数据格式处理被限制在数据模块内，核心分割模型只依赖带类型标注的协议。
 
-## 13. Quality and Verification
+## 13. 质量与验证
 
-The project targets Python 3.10 or newer and PyTorch 2.1 or newer. Public functions and configuration dataclasses use type annotations. Ruff enforces formatting, imports, and common correctness rules. Pytest is the test runner.
+项目要求 Python 3.10 或更高版本，以及 PyTorch 2.1 或更高版本。公共函数和配置数据类使用类型标注。Ruff 负责格式、导入和常见正确性规则，Pytest 作为测试运行器。
 
-Tests must cover:
+测试必须覆盖：
 
-- every supported array format and invalid shape/key errors;
-- train-only normalization and finite terrain features;
-- paired crop and sliding-window reconstruction;
-- encoder pyramid shape contracts;
-- gate bounds and fusion gradients;
-- alignment masking and empty-mask errors;
-- dense text-logit dimensions and normalized embeddings;
-- seen/unseen and harmonic metrics;
-- checkpoint incompatibility detection;
-- one synthetic CPU training step and one sliding-window evaluation pass.
+- 所有支持的数组格式，以及非法形状和数组键错误；
+- 仅使用训练数据计算归一化统计量，并保证地形特征为有限值；
+- 配对裁剪和滑窗重建；
+- 编码器特征金字塔形状契约；
+- 门控范围和融合梯度；
+- 对齐掩码和空掩码错误；
+- 密集文本相似度分数的维度和嵌入归一化；
+- 已见类、未见类和调和平均指标；
+- 检查点不兼容检测；
+- 一次合成数据 CPU 训练步骤和一次滑窗评估。
 
-Completion requires all offline tests to pass, Ruff checks to pass, the package to build successfully, and CLI help plus configuration validation to execute without accessing the network.
+完成条件包括：全部离线测试通过、Ruff 检查通过、软件包构建成功，并且命令行帮助和配置校验能够在不访问网络的情况下执行。
 
-## 14. Acceptance Criteria
+## 14. 验收标准
 
-The implementation is accepted when:
+满足以下条件时接受该实现：
 
-1. `python -m pytest` passes without data or pretrained weights.
-2. `ruff check .` reports no violations.
-3. `python -m build` produces source and wheel distributions.
-4. `hsi-lidar-ovseg --help` lists train, evaluate, and validate-config commands.
-5. A synthetic configuration completes one CPU training step and sliding-window evaluation.
-6. Each real dataset configuration validates after the user supplies its paths, MATLAB keys, and local pretrained checkpoints.
-7. No command downloads a model or dataset unless that behavior is added later through an explicit, separately approved feature.
+1. `python -m pytest` 在没有数据集和预训练权重的情况下通过。
+2. `ruff check .` 不报告违规项。
+3. `python -m build` 能生成源码包和 wheel 包。
+4. `hsi-lidar-ovseg --help` 能列出 `train`、`evaluate` 和 `validate-config` 子命令。
+5. 合成数据配置能够完成一次 CPU 训练步骤和一次滑窗评估。
+6. 用户提供路径、MATLAB 数组键和本地预训练检查点后，每个真实数据集配置均能通过校验。
+7. 除非今后通过单独批准的功能显式加入，否则任何命令都不得下载模型或数据集。
