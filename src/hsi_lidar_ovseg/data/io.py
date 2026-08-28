@@ -43,11 +43,11 @@ def _select_array(arrays: dict[str, np.ndarray], key: str | None, path: Path) ->
     if key is None:
         if len(visible) != 1:
             raise DataError(
-                f"{path} 包含多个数组，必须配置数组键；可用键: {_available_keys(list(visible))}"
+                f"{path} 包含多个数组, 必须配置数组键; 可用键: {_available_keys(list(visible))}"
             )
         return np.asarray(next(iter(visible.values())))
     if key not in visible:
-        raise DataError(f"{path} 缺少数组键 {key!r}；可用键: {_available_keys(list(visible))}")
+        raise DataError(f"{path} 缺少数组键 {key!r}; 可用键: {_available_keys(list(visible))}")
     return np.asarray(visible[key])
 
 
@@ -57,11 +57,11 @@ def _load_hdf5_mat(path: Path, key: str | None) -> np.ndarray:
         if key is None:
             if len(keys) != 1:
                 raise DataError(
-                    f"{path} 包含多个数组，必须配置数组键；可用键: {_available_keys(keys)}"
+                    f"{path} 包含多个数组, 必须配置数组键; 可用键: {_available_keys(keys)}"
                 )
             key = keys[0]
         if key not in handle:
-            raise DataError(f"{path} 缺少数组键 {key!r}；可用键: {_available_keys(keys)}")
+            raise DataError(f"{path} 缺少数组键 {key!r}; 可用键: {_available_keys(keys)}")
         array = np.asarray(handle[key])
     if array.ndim >= 2:
         array = array.transpose(tuple(reversed(range(array.ndim))))
@@ -95,7 +95,7 @@ def load_array(path: Path, key: str | None) -> np.ndarray:
 def _as_2d(array: np.ndarray, name: str) -> np.ndarray:
     squeezed = np.squeeze(array)
     if squeezed.ndim != 2:
-        raise DataError(f"{name} 必须是二维数组，实际形状为 {array.shape}")
+        raise DataError(f"{name} 必须是二维数组, 实际形状为 {array.shape}")
     return squeezed
 
 
@@ -105,12 +105,12 @@ def _as_channel_last(array: np.ndarray, spatial_shape: tuple[int, int], name: st
             raise DataError(f"{name} 空间尺寸 {array.shape} 与标签 {spatial_shape} 不一致")
         return array[..., None]
     if array.ndim != 3:
-        raise DataError(f"{name} 必须是二维或三维数组，实际形状为 {array.shape}")
+        raise DataError(f"{name} 必须是二维或三维数组, 实际形状为 {array.shape}")
     if array.shape[:2] == spatial_shape:
         return array
     if array.shape[-2:] == spatial_shape:
         return np.moveaxis(array, 0, -1)
-    raise DataError(f"{name} 空间尺寸无法与标签 {spatial_shape} 配准，实际形状为 {array.shape}")
+    raise DataError(f"{name} 空间尺寸无法与标签 {spatial_shape} 配准, 实际形状为 {array.shape}")
 
 
 def _as_labels(array: np.ndarray) -> np.ndarray:

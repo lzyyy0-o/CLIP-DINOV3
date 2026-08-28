@@ -28,9 +28,7 @@ class NormalizationStats:
 
 def _training_values(array: np.ndarray, train_mask: np.ndarray, name: str) -> np.ndarray:
     if array.ndim != 3 or train_mask.shape != array.shape[:2]:
-        raise DataError(
-            f"{name} 与 train_mask 形状不兼容: {array.shape} 和 {train_mask.shape}"
-        )
+        raise DataError(f"{name} 与 train_mask 形状不兼容: {array.shape} 和 {train_mask.shape}")
     if not np.any(train_mask):
         raise DataError("train_mask 不包含任何像素")
     values = array[train_mask]
@@ -95,7 +93,7 @@ def terrain_channels(lidar: np.ndarray, window_size: int = 9) -> np.ndarray:
     """Build normalized height, local relative height, and slope magnitude."""
 
     if lidar.ndim != 3 or lidar.shape[-1] < 1:
-        raise DataError(f"lidar 必须是至少单通道的 HWC 数组，实际形状为 {lidar.shape}")
+        raise DataError(f"lidar 必须是至少单通道的 HWC 数组, 实际形状为 {lidar.shape}")
     if window_size <= 0 or window_size % 2 == 0:
         raise DataError("window_size 必须为正奇数")
     height = np.asarray(lidar[..., 0], dtype=np.float32)
@@ -123,7 +121,7 @@ def pseudo_rgb(
     """Create a three-channel visible proxy with train-only percentile stretching."""
 
     if hsi.ndim != 3 or len(indices) != 3:
-        raise DataError("hsi 必须是 HWC 数组，indices 必须包含三个索引")
+        raise DataError("hsi 必须是 HWC 数组, indices 必须包含三个索引")
     if min(indices) < 0 or max(indices) >= hsi.shape[-1]:
         raise DataError(f"indices 超过 HSI 波段范围 0..{hsi.shape[-1] - 1}: {indices}")
     if not 0 <= lower_percentile < upper_percentile <= 100:
