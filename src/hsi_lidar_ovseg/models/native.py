@@ -8,7 +8,7 @@ from hsi_lidar_ovseg.models.protocols import FeaturePyramid
 
 
 def _group_count(channels: int) -> int:
-    for groups in range(min(8, channels), 0, -1):
+    for groups in range(min(8, max(1, channels // 2)), 0, -1):
         if channels % groups == 0:
             return groups
     return 1
