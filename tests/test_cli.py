@@ -224,6 +224,8 @@ def test_cli_runs_one_offline_cpu_training_epoch(tmp_path: Path) -> None:
             "tile_size": 32,
             "overlap": 8,
             "min_seen_pixels": 1,
+            "class_aware_sampling": True,
+            "class_aware_fraction": 0.7,
             "batch_size": 1,
             "epochs": 1,
             "learning_rate": 0.001,

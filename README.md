@@ -107,6 +107,21 @@ hsi-lidar-ovseg validate-config configs/houston2013.yaml
 
 示例默认使用 `kind: native`，便于在没有外部代码和权重时验证完整流程。`clip_checkpoint: null` 会显式启用确定性的哈希文本原型，只适用于工程冒烟和消融，不具备 CLIP 的语言语义，不应作为开放词汇最终实验结果。
 
+### 类别感知中心采样
+
+训练 Dataset 默认混合类别中心图块与固定网格图块：
+
+```yaml
+train:
+  min_seen_pixels: 1
+  class_aware_sampling: true
+  class_aware_fraction: 0.7
+```
+
+`class_aware_fraction: 0.7` 表示每个训练样本有 70% 概率先在有合格训练像素的已见类中均匀选择一个类别，再以该类训练像素为中心按需裁取完整密集图块；其余 30% 沿用固定网格。中心候选仅由 `train_mask` 与 `seen_class_ids` 生成，并继续满足 `min_seen_pixels`，不会读取测试区或未见类坐标。HSI、LiDAR、伪 RGB、标签和有效掩码共享同一裁剪位置及空间增强，每个 epoch 使用不同但可复现的随机流。
+
+设置 `class_aware_sampling: false` 或 `class_aware_fraction: 0.0` 可恢复纯固定网格训练。该策略只保存类别像素坐标并在访问时裁剪，不会预生成或复制全部 HSI/LiDAR patch。
+
 ### HyperSIGMA、DINOv3 与 RemoteCLIP 目标配置
 
 外部视觉编码器需提供一个不访问网络的 Python 工厂和本地检查点，例如：

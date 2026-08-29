@@ -72,14 +72,21 @@ class PairedTileDataset(Dataset[Mapping[str, torch.Tensor]]):
         training: bool,
         seed: int,
         terrain_window: int = 9,
+        class_aware_sampling: bool = True,
+        class_aware_fraction: float = 0.7,
     ) -> None:
         if tile_size <= 0 or min_seen_pixels <= 0:
             raise DataError("tile_size 和 min_seen_pixels 必须为正整数")
         if not seen_ids:
             raise DataError("seen_ids 不得为空")
+        if not 0.0 <= class_aware_fraction <= 1.0:
+            raise DataError("class_aware_fraction 必须位于 [0, 1]")
         self.tile_size = tile_size
         self.training = training
         self.seed = seed
+        self.epoch = 0
+        self.class_aware_sampling = class_aware_sampling
+        self.class_aware_fraction = class_aware_fraction
 
         split_mask = scene.train_mask if training else scene.test_mask
         supervised = split_mask & np.isin(scene.labels, seen_ids)
@@ -103,12 +110,79 @@ class PairedTileDataset(Dataset[Mapping[str, torch.Tensor]]):
         self.rgb = pseudo_rgb(scene.hsi, pseudo_rgb_indices, scene.train_mask)
         self.labels = scene.labels
         self.valid_mask = supervised if training else split_mask
+        self.class_coordinates: tuple[np.ndarray, ...] = ()
+        if training and class_aware_sampling and class_aware_fraction > 0.0:
+            self.class_coordinates = self._eligible_class_coordinates(
+                supervised,
+                scene.labels,
+                seen_ids,
+                min_seen_pixels,
+            )
 
     def __len__(self) -> int:
         return len(self.origins)
 
+    def set_epoch(self, epoch: int) -> None:
+        """Select a reproducible sampling and augmentation stream for one epoch."""
+
+        self.epoch = epoch
+
+    def _centered_origin(self, row: int, column: int) -> tuple[int, int]:
+        max_top = max(0, self.hsi.shape[0] - self.tile_size)
+        max_left = max(0, self.hsi.shape[1] - self.tile_size)
+        top = min(max(row - self.tile_size // 2, 0), max_top)
+        left = min(max(column - self.tile_size // 2, 0), max_left)
+        return top, left
+
+    def _eligible_class_coordinates(
+        self,
+        supervised: np.ndarray,
+        labels: np.ndarray,
+        seen_ids: tuple[int, ...],
+        min_seen_pixels: int,
+    ) -> tuple[np.ndarray, ...]:
+        integral = np.pad(supervised.astype(np.int64), ((1, 0), (1, 0))).cumsum(0).cumsum(1)
+        max_top = max(0, supervised.shape[0] - self.tile_size)
+        max_left = max(0, supervised.shape[1] - self.tile_size)
+        eligible_classes: list[np.ndarray] = []
+        for class_id in seen_ids:
+            coordinates = np.argwhere(supervised & (labels == class_id))
+            if not coordinates.size:
+                continue
+            tops = np.clip(coordinates[:, 0] - self.tile_size // 2, 0, max_top)
+            lefts = np.clip(coordinates[:, 1] - self.tile_size // 2, 0, max_left)
+            bottoms = np.minimum(tops + self.tile_size, supervised.shape[0])
+            rights = np.minimum(lefts + self.tile_size, supervised.shape[1])
+            counts = (
+                integral[bottoms, rights]
+                - integral[tops, rights]
+                - integral[bottoms, lefts]
+                + integral[tops, lefts]
+            )
+            eligible = coordinates[counts >= min_seen_pixels]
+            if eligible.size:
+                eligible_classes.append(eligible)
+        return tuple(eligible_classes)
+
+    def _sample_origin(self, index: int, generator: np.random.Generator) -> tuple[int, int]:
+        if (
+            self.training
+            and self.class_aware_sampling
+            and self.class_coordinates
+            and generator.random() < self.class_aware_fraction
+        ):
+            class_index = int(generator.integers(0, len(self.class_coordinates)))
+            coordinates = self.class_coordinates[class_index]
+            coordinate_index = int(generator.integers(0, len(coordinates)))
+            row, column = coordinates[coordinate_index]
+            return self._centered_origin(int(row), int(column))
+        return self.origins[index]
+
     def __getitem__(self, index: int) -> Mapping[str, torch.Tensor]:
-        top, left = self.origins[index]
+        if index < 0 or index >= len(self):
+            raise IndexError(index)
+        generator = np.random.default_rng(np.random.SeedSequence((self.seed, self.epoch, index)))
+        top, left = self._sample_origin(index, generator)
         hsi = _crop_and_pad(self.hsi, top, left, self.tile_size)
         lidar = _crop_and_pad(self.lidar, top, left, self.tile_size)
         rgb = _crop_and_pad(self.rgb, top, left, self.tile_size)
@@ -120,7 +194,6 @@ class PairedTileDataset(Dataset[Mapping[str, torch.Tensor]]):
         ).astype(np.bool_, copy=False)
 
         if self.training:
-            generator = np.random.default_rng(np.random.SeedSequence((self.seed, index)))
             rotations = int(generator.integers(0, 4))
             flip_vertical = bool(generator.integers(0, 2))
             flip_horizontal = bool(generator.integers(0, 2))

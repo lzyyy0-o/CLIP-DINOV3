@@ -45,6 +45,8 @@ train:
   tile_size: 224
   overlap: 56
   min_seen_pixels: 1
+  class_aware_sampling: true
+  class_aware_fraction: 0.7
   batch_size: 2
   epochs: 20
   learning_rate: 0.0001

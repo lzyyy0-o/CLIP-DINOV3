@@ -224,6 +224,8 @@ class TrainConfig:
     tile_size: int = 224
     overlap: int = 56
     min_seen_pixels: int = 1
+    class_aware_sampling: bool = True
+    class_aware_fraction: float = 0.7
     batch_size: int = 2
     epochs: int = 1
     learning_rate: float = 1e-4
@@ -240,6 +242,10 @@ class TrainConfig:
             raise ConfigError("overlap 必须满足 0 <= overlap < tile_size")
         if self.min_seen_pixels <= 0:
             raise ConfigError("min_seen_pixels 必须为正整数")
+        if not isinstance(self.class_aware_sampling, bool):
+            raise ConfigError("class_aware_sampling 必须是布尔值")
+        if not 0.0 <= self.class_aware_fraction <= 1.0:
+            raise ConfigError("class_aware_fraction 必须位于 [0, 1]")
         if self.batch_size <= 0 or self.epochs <= 0:
             raise ConfigError("batch_size 和 epochs 必须为正整数")
         if self.learning_rate <= 0 or self.backbone_learning_rate <= 0:

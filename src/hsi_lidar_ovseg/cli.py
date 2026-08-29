@@ -390,6 +390,8 @@ def _train_command(args: argparse.Namespace) -> int:
         training=True,
         seed=config.seed,
         terrain_window=config.model.terrain_window,
+        class_aware_sampling=config.train.class_aware_sampling,
+        class_aware_fraction=config.train.class_aware_fraction,
     )
     generator = torch.Generator().manual_seed(config.seed)
     loader = DataLoader(
@@ -401,6 +403,7 @@ def _train_command(args: argparse.Namespace) -> int:
     config.output_dir.mkdir(parents=True, exist_ok=True)
     best_score = float("-inf")
     for epoch in range(start_epoch, config.train.epochs):
+        dataset.set_epoch(epoch)
         epoch_losses: list[float] = []
         for batch in loader:
             losses = trainer.train_step(batch)

@@ -5,7 +5,13 @@ from pathlib import Path
 import pytest
 import yaml
 
-from hsi_lidar_ovseg.config import ConfigError, DataConfig, EncoderConfig, load_config
+from hsi_lidar_ovseg.config import (
+    ConfigError,
+    DataConfig,
+    EncoderConfig,
+    TrainConfig,
+    load_config,
+)
 
 
 def _valid_data_config(**overrides: object) -> DataConfig:
@@ -74,6 +80,8 @@ def _valid_config_dict() -> dict[str, object]:
             "tile_size": 224,
             "overlap": 56,
             "min_seen_pixels": 1,
+            "class_aware_sampling": True,
+            "class_aware_fraction": 0.7,
             "batch_size": 2,
             "epochs": 1,
             "learning_rate": 0.0001,
@@ -115,6 +123,8 @@ def test_load_config_converts_sequences_and_paths(tmp_path: Path) -> None:
     assert config.data.class_names == ("tree", "road", "water")
     assert config.data.hsi_path == Path("hsi.npy")
     assert config.model.feature_dim == 64
+    assert config.train.class_aware_sampling
+    assert config.train.class_aware_fraction == 0.7
 
 
 @pytest.mark.parametrize(
@@ -148,6 +158,12 @@ def test_train_config_rejects_overlap_not_smaller_than_tile(tmp_path: Path) -> N
 
     with pytest.raises(ConfigError, match="overlap"):
         load_config(path, check_files=False)
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.1])
+def test_train_config_rejects_invalid_class_aware_fraction(value: float) -> None:
+    with pytest.raises(ConfigError, match="class_aware_fraction"):
+        TrainConfig(class_aware_fraction=value)
 
 
 def test_encoder_config_rejects_frozen_partial_unfreezing() -> None:
