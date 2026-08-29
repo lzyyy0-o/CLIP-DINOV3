@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hsi-lidar-ovseg"
+version = "0.1.0"
+description = "Open-vocabulary semantic segmentation for co-registered HSI and LiDAR rasters"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "HSI-LiDAR OVSeg Contributors" }]
+dependencies = [
+    "h5py>=3.10",
+    "numpy>=1.26",
+    "PyYAML>=6.0",
+    "scipy>=1.11",
+    "torch>=2.1",
+]
+
+[project.optional-dependencies]
+pretrained = [
+    "open-clip-torch>=2.24",
+    "timm>=1.0",
+    "torchvision>=0.16",
+]
+dev = [
+    "build>=1.2",
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.8",
+]
+
+[project.scripts]
+hsi-lidar-ovseg = "hsi_lidar_ovseg.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "--strict-markers --strict-config"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+
+[tool.ruff.format]
+quote-style = "double"

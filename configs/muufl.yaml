@@ -1,0 +1,47 @@
+name: muufl_native_ovseg
+seed: 13
+output_dir: outputs/muufl
+
+data:
+  name: MUUFL Gulfport
+  hsi_path: data/muufl/hsi.mat
+  lidar_path: data/muufl/lidar.mat
+  labels_path: data/muufl/labels.mat
+  train_mask_path: data/muufl/train_mask.mat
+  test_mask_path: data/muufl/test_mask.mat
+  hsi_key: HSI
+  lidar_key: LiDAR
+  labels_key: labels
+  train_mask_key: train_mask
+  test_mask_key: test_mask
+  class_names:
+    - trees
+    - mostly grass
+    - mixed ground surface
+    - dirt and sand
+    - road
+    - water
+    - building shadow
+    - buildings
+    - sidewalk
+    - yellow curb
+    - cloth panels
+  # 项目默认研究划分，并非社区标准划分。
+  seen_class_ids: [1, 2, 3, 4, 5, 6, 7, 8]
+  unseen_class_ids: [9, 10, 11]
+  pseudo_rgb_indices: [25, 14, 5]
+
+model:
+  hsi_encoder: {kind: native, checkpoint: null}
+  lidar_encoder: {kind: native, checkpoint: null}
+  structure_teacher_encoder: {kind: native, checkpoint: null, frozen: true}
+  semantic_teacher_encoder: {kind: native, checkpoint: null, frozen: true}
+  clip_checkpoint: null
+  clip_model_name: ViT-B-32
+  prompt_templates: ["a remote sensing image of {}", "an aerial view of {}"]
+  feature_dim: 256
+  text_dim: 512
+  terrain_window: 9
+
+loss: {structure_teacher_weight: 1.0, semantic_teacher_weight: 1.0, cross_weight: 0.5, gate_weight: 0.01, private_weight: 0.01, temperature: 0.1}
+train: {tile_size: 224, overlap: 56, min_seen_pixels: 1, batch_size: 2, epochs: 20, learning_rate: 0.0001, backbone_learning_rate: 0.00001, weight_decay: 0.01, gradient_clip: 1.0, amp: true, device: cuda}
