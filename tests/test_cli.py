@@ -4,12 +4,23 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import torch
 import yaml
+from torch import nn
 
-from hsi_lidar_ovseg.cli import deterministic_text_embeddings
+from hsi_lidar_ovseg import cli
+from hsi_lidar_ovseg.cli import _build_model_and_text, deterministic_text_embeddings
+from hsi_lidar_ovseg.config import (
+    DataConfig,
+    EncoderConfig,
+    ExperimentConfig,
+    LossConfig,
+    ModelConfig,
+    TrainConfig,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -64,6 +75,95 @@ def test_deterministic_text_embeddings_are_normalized_and_repeatable() -> None:
     torch.testing.assert_close(first.norm(dim=-1), torch.ones(2))
 
 
+class _FakeRemoteClipVisual(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.conv1 = nn.Conv2d(3, 16, 8, stride=8)
+
+    def forward_intermediates(self, inputs: torch.Tensor, **_: object) -> object:
+        raise AssertionError("构建模型时不应运行视觉前向")
+
+
+class _FakeRemoteClip(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.visual = _FakeRemoteClipVisual()
+        self.text_anchor = nn.Parameter(torch.ones(()))
+
+    def encode_text(self, tokens: torch.Tensor) -> torch.Tensor:
+        values = tokens.float()
+        return torch.stack((values[:, 0], values[:, 1], values.sum(dim=1)), dim=-1)
+
+
+def _fake_tokenizer(texts: list[str]) -> torch.Tensor:
+    return torch.tensor([[len(text), sum(map(ord, text)) % 17] for text in texts])
+
+
+def test_remoteclip_model_is_loaded_once_for_text_and_visual_towers(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    checkpoint = tmp_path / "remoteclip.pt"
+    remoteclip = _FakeRemoteClip()
+    calls: list[tuple[str, object]] = []
+
+    def create_model(model_name: str, *, pretrained: object) -> nn.Module:
+        calls.append((model_name, pretrained))
+        return remoteclip
+
+    fake_open_clip = SimpleNamespace(
+        create_model=create_model, get_tokenizer=lambda _: _fake_tokenizer
+    )
+    monkeypatch.setitem(sys.modules, "open_clip", fake_open_clip)  # type: ignore[attr-defined]
+    monkeypatch.setattr(cli, "_load_local_weights", lambda _module, _path: None)  # type: ignore[attr-defined]
+    data = DataConfig(
+        name="demo",
+        hsi_path=Path("hsi.npy"),
+        lidar_path=Path("lidar.npy"),
+        labels_path=Path("labels.npy"),
+        train_mask_path=Path("train.npy"),
+        test_mask_path=Path("test.npy"),
+        hsi_key=None,
+        lidar_key=None,
+        labels_key=None,
+        train_mask_key=None,
+        test_mask_key=None,
+        class_names=("tree", "road"),
+        seen_class_ids=(1,),
+        unseen_class_ids=(2,),
+        pseudo_rgb_indices=(0, 1, 2),
+    )
+    config = ExperimentConfig(
+        name="remoteclip",
+        seed=7,
+        output_dir=tmp_path / "outputs",
+        data=data,
+        model=ModelConfig(
+            hsi_encoder=EncoderConfig(kind="native"),
+            lidar_encoder=EncoderConfig(kind="native"),
+            structure_teacher_encoder=EncoderConfig(kind="native", frozen=True),
+            semantic_teacher_encoder=EncoderConfig(
+                kind="remoteclip",
+                checkpoint=checkpoint,
+                model_name="ViT-B-32",
+                feature_blocks=(0, 1, 2, 3),
+                frozen=True,
+            ),
+            clip_checkpoint=checkpoint,
+            clip_model_name="ViT-B-32",
+            feature_dim=8,
+            text_dim=3,
+        ),
+        loss=LossConfig(),
+        train=TrainConfig(device="cpu"),
+    )
+
+    model, embeddings = _build_model_and_text(config, hsi_bands=6)
+
+    assert calls == [("ViT-B-32", None)]
+    assert model.semantic_teacher_encoder.backbone is remoteclip.visual
+    assert embeddings.shape == (2, 3)
+
+
 def test_cli_runs_one_offline_cpu_training_epoch(tmp_path: Path) -> None:
     generator = np.random.default_rng(9)
     height = width = 32
@@ -105,14 +205,16 @@ def test_cli_runs_one_offline_cpu_training_epoch(tmp_path: Path) -> None:
         "model": {
             "hsi_encoder": {"kind": "native"},
             "lidar_encoder": {"kind": "native"},
-            "teacher_encoder": {"kind": "native", "frozen": True},
+            "structure_teacher_encoder": {"kind": "native", "frozen": True},
+            "semantic_teacher_encoder": {"kind": "native", "frozen": True},
             "clip_checkpoint": None,
             "feature_dim": 8,
             "text_dim": 10,
             "terrain_window": 3,
         },
         "loss": {
-            "teacher_weight": 1.0,
+            "structure_teacher_weight": 1.0,
+            "semantic_teacher_weight": 1.0,
             "cross_weight": 0.5,
             "gate_weight": 0.01,
             "private_weight": 0.01,

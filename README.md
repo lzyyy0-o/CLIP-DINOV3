@@ -4,11 +4,14 @@
 
 ## 模型结构
 
-- HSI 学生分支读取完整光谱立方体，可使用项目内置卷积金字塔或 HyperSIGMA 适配器。
-- LiDAR 首先转换为归一化高度、局部相对高度、坡度幅值三个地形通道，再进入内置编码器或 DINOv2 适配器。
-- 语义教师从 HSI 的可见光波段生成伪 RGB，并由冻结编码器产生对齐目标。
+- HSI 学生分支读取完整光谱立方体，论文目标配置使用 HyperSIGMA；项目内置卷积金字塔用于离线测试与消融。
+- LiDAR 首先转换为归一化高度、局部相对高度、坡度幅值三个地形通道，论文目标配置使用 DINOv3 ConvNeXt-Tiny。
+- HSI 伪 RGB 同时送入冻结 DINOv3 结构教师和冻结 RemoteCLIP 语义教师；前者约束两种学生模态，后者约束融合表示。
+- RemoteCLIP 文本塔预先生成归一化类别原型，并与语义教师严格共享同一模型结构和检查点。
 - 四层 HSI/LiDAR 特征经过空间门控融合，FPN 解码器把每个像素映射到文本空间。
-- 训练目标包含已见类分割、HSI/教师对齐、LiDAR/教师对齐、跨模态对齐、门控与私有特征正则项。
+- 训练目标包含已见类分割、HSI/LiDAR 到结构教师的对齐、融合特征到语义教师的对齐、跨模态对齐、门控与私有特征正则项。
+
+四个视觉编码器统一返回步长为 `4/8/16/32` 的 NCHW 特征金字塔。DINOv3 ConvNeXt 直接保留原生层次；HyperSIGMA、DINOv3 ViT 和 RemoteCLIP ViT 的中间特征由适配器恢复成四尺度表示。两个教师始终冻结并处于 `eval()`，教师前向不记录梯度。
 
 所有外部主干均采用“注入本地模型 + 显式本地检查点”的方式，不调用在线模型仓库。
 
@@ -54,7 +57,9 @@ data/
 weights/
 ├── hypersigma.pt
 ├── dinov2.pt
-└── clip.pt
+├── dinov3-convnext-tiny.pt
+├── dinov3-vit.pt
+└── remoteclip.pt
 ```
 
 输入支持 `.mat`、`.npy` 和 `.npz`。统一数组契约为：
@@ -102,7 +107,7 @@ hsi-lidar-ovseg validate-config configs/houston2013.yaml
 
 示例默认使用 `kind: native`，便于在没有外部代码和权重时验证完整流程。`clip_checkpoint: null` 会显式启用确定性的哈希文本原型，只适用于工程冒烟和消融，不具备 CLIP 的语言语义，不应作为开放词汇最终实验结果。
 
-### HyperSIGMA、DINOv2 与 CLIP
+### HyperSIGMA、DINOv3 与 RemoteCLIP 目标配置
 
 外部视觉编码器需提供一个不访问网络的 Python 工厂和本地检查点，例如：
 
@@ -117,29 +122,50 @@ model:
     frozen: false
     unfreeze_blocks: 2
   lidar_encoder:
-    kind: dinov2
-    factory: third_party.dinov2:create_model
-    model_name: vit_base
-    checkpoint: weights/dinov2.pt
+    kind: dinov3_convnext
+    factory: third_party.dinov3:create_model
+    model_name: dinov3_convnext_tiny
+    checkpoint: weights/dinov3-convnext-tiny.pt
+    feature_blocks: [0, 1, 2, 3]
+    frozen: false
+    unfreeze_blocks: 1
+  structure_teacher_encoder:
+    kind: dinov3_vit
+    factory: third_party.dinov3:create_model
+    model_name: dinov3_vitb16
+    checkpoint: weights/dinov3-vit.pt
     feature_blocks: [2, 5, 8, 11]
     frozen: true
-  teacher_encoder:
-    kind: dinov2
-    factory: third_party.dinov2:create_model
-    model_name: vit_base
-    checkpoint: weights/dinov2.pt
-    feature_blocks: [2, 5, 8, 11]
+  semantic_teacher_encoder:
+    kind: remoteclip
+    model_name: ViT-L-14
+    checkpoint: weights/remoteclip.pt
+    feature_blocks: [5, 11, 17, 23]
     frozen: true
-  clip_checkpoint: weights/clip.pt
-  clip_model_name: ViT-B-32
+  clip_checkpoint: weights/remoteclip.pt
+  clip_model_name: ViT-L-14
   prompt_templates:
     - "a remote sensing image of {}"
     - "an aerial view of {}"
+  feature_dim: 256
+  text_dim: 768
+
+loss:
+  structure_teacher_weight: 1.0
+  semantic_teacher_weight: 1.0
+  cross_weight: 0.5
+  gate_weight: 0.01
+  private_weight: 0.01
+  temperature: 0.1
 ```
 
-工厂格式是 `package.module:callable`。工厂应返回已构造但未加载权重的 `torch.nn.Module`；本项目随后严格加载本地状态字典。DINOv2 风格主干需实现 `get_intermediate_layers`，HyperSIGMA 主干需实现 `forward_intermediates` 或同名 DINOv2 接口，并公开 `patch_size` 与 `embed_dim`/`num_features`。
+工厂格式是 `package.module:callable`。工厂应返回已构造但未加载权重的 `torch.nn.Module`；本项目随后严格加载本地状态字典。HyperSIGMA 和 DINOv3 ViT 主干需公开 `patch_size`、`embed_dim`/`num_features` 和中间层接口；DINOv3 ConvNeXt 需公开 `embed_dims`、四个 `stages`、四个 `downsample_layers` 以及 `get_intermediate_layers`。
+
+`remoteclip` 不配置 `factory`，而是由本地 OpenCLIP 注册结构创建。其 `checkpoint` 必须与 `clip_checkpoint` 相同，`model_name` 若提供则必须等于 `clip_model_name`。CLI 只加载一次完整 RemoteCLIP：先生成文本原型，再把同一实例的视觉塔装入语义教师，避免在显存中保留两份权重。
 
 `clip_model_name` 必须是 OpenCLIP 本地注册的模型结构；为防止隐式联网，配置会拒绝 `hf-hub:` 模型名。自定义视觉工厂同样不得在构造过程中下载权重或配置。
+
+该完整组合明显重于原生配置。以 `224×224`、AMP、batch size 1 为起点较稳妥；显存峰值取决于 HyperSIGMA/DINOv3/RemoteCLIP 的具体规模和解冻层数。若显存不足，依次减小 batch size、把 LiDAR 学生的 `unfreeze_blocks` 设为 `0`、启用梯度累积，再考虑缩小主干。教师虽不保存反向图，仍需驻留权重并保存四层投影特征。
 
 ## 训练、恢复与评估
 

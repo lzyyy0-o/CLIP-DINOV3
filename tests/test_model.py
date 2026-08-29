@@ -28,8 +28,29 @@ def test_model_outputs_dense_normalized_embeddings() -> None:
         atol=1e-5,
         rtol=1e-5,
     )
-    assert set(output.alignment_features) == {"hsi", "lidar", "teacher", "fused"}
+    assert set(output.alignment_features) == {
+        "hsi",
+        "lidar",
+        "structure_teacher",
+        "semantic_teacher",
+        "fused",
+    }
     assert len(output.gates) == 4
+
+
+def test_model_keeps_both_teachers_frozen_in_training_mode() -> None:
+    model = make_native_model(hsi_bands=12, lidar_channels=3, feature_dim=16, text_dim=24)
+
+    model.train()
+
+    assert not model.structure_teacher_encoder.training
+    assert not model.semantic_teacher_encoder.training
+    assert not any(
+        parameter.requires_grad for parameter in model.structure_teacher_encoder.parameters()
+    )
+    assert not any(
+        parameter.requires_grad for parameter in model.semantic_teacher_encoder.parameters()
+    )
 
 
 def test_model_clamps_similarity_scale() -> None:

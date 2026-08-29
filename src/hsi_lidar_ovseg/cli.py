@@ -42,9 +42,12 @@ from hsi_lidar_ovseg.metrics import SegmentationMetrics
 from hsi_lidar_ovseg.models import (
     ClipTextEncoder,
     DinoV2Adapter,
+    DinoV3ConvNeXtAdapter,
+    DinoV3ViTAdapter,
     HSILidarOVSegmentor,
     HyperSigmaAdapter,
     NativePyramidEncoder,
+    RemoteClipVisionAdapter,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -108,6 +111,8 @@ def _build_visual_encoder(
 ) -> nn.Module:
     if config.kind == "native":
         return NativePyramidEncoder(in_channels)
+    if config.kind == "remoteclip":
+        raise ConfigError("RemoteCLIP 视觉塔必须通过共享模型构建流程创建")
     assert config.factory is not None and config.checkpoint is not None
     factory = _resolve_factory(config.factory)
     kwargs = {} if config.model_name is None else {"model_name": config.model_name}
@@ -126,16 +131,79 @@ def _build_visual_encoder(
             frozen=frozen,
             unfreeze_blocks=unfreeze_blocks,
         )
-    return DinoV2Adapter(  # type: ignore[arg-type]
-        backbone,
-        blocks,
-        feature_dim,
-        frozen=frozen,
-        unfreeze_blocks=unfreeze_blocks,
-    )
+    if config.kind == "dinov2":
+        return DinoV2Adapter(  # type: ignore[arg-type]
+            backbone,
+            blocks,
+            feature_dim,
+            frozen=frozen,
+            unfreeze_blocks=unfreeze_blocks,
+        )
+    if config.kind == "dinov3_vit":
+        return DinoV3ViTAdapter(  # type: ignore[arg-type]
+            backbone,
+            blocks,
+            feature_dim,
+            frozen=frozen,
+            unfreeze_blocks=unfreeze_blocks,
+        )
+    if config.kind == "dinov3_convnext":
+        return DinoV3ConvNeXtAdapter(  # type: ignore[arg-type]
+            backbone,
+            feature_stages=blocks,
+            frozen=frozen,
+            unfreeze_blocks=unfreeze_blocks,
+        )
+    raise ConfigError(f"不支持的 encoder.kind: {config.kind}")
 
 
-def _build_model(config: ExperimentConfig, hsi_bands: int) -> HSILidarOVSegmentor:
+def _load_open_clip(config: ExperimentConfig) -> tuple[nn.Module, Callable[[list[str]], Any]]:
+    if config.model.clip_checkpoint is None:
+        raise ConfigError("加载 OpenCLIP 时 clip_checkpoint 不得为空")
+    try:
+        import open_clip
+    except ImportError as error:
+        raise ConfigError("使用 CLIP 权重时必须安装 pretrained 可选依赖") from error
+    model = open_clip.create_model(config.model.clip_model_name, pretrained=None)
+    if not isinstance(model, nn.Module):
+        raise ConfigError("open_clip.create_model 必须返回 torch.nn.Module")
+    _load_local_weights(model, config.model.clip_checkpoint)
+    tokenizer = open_clip.get_tokenizer(config.model.clip_model_name)
+    if not callable(tokenizer):
+        raise ConfigError("OpenCLIP tokenizer 不可调用")
+    return model, tokenizer
+
+
+def _encode_text_embeddings(
+    config: ExperimentConfig,
+    model: nn.Module,
+    tokenizer: Callable[[list[str]], Any],
+) -> torch.Tensor:
+    encoder = ClipTextEncoder(model, tokenizer, config.model.prompt_templates)
+    embeddings = encoder.encode(config.data.class_names)
+    if embeddings.shape[1] != config.model.text_dim:
+        raise ConfigError(
+            f"CLIP 文本维度为 {embeddings.shape[1]}, 但 model.text_dim={config.model.text_dim}"
+        )
+    return embeddings.cpu()
+
+
+def _build_text_embeddings(config: ExperimentConfig) -> torch.Tensor:
+    if config.model.clip_checkpoint is None:
+        LOGGER.warning(
+            "clip_checkpoint=null: 使用确定性哈希文本原型; "
+            "仅适合离线冒烟和消融, 不代表 CLIP 开放词汇能力"
+        )
+        return deterministic_text_embeddings(config.data.class_names, config.model.text_dim)
+    model, tokenizer = _load_open_clip(config)
+    return _encode_text_embeddings(config, model, tokenizer)
+
+
+def _build_model_and_text(
+    config: ExperimentConfig, hsi_bands: int
+) -> tuple[HSILidarOVSegmentor, torch.Tensor]:
+    """Build all visual towers and text prototypes without duplicating RemoteCLIP."""
+
     hsi_encoder = _build_visual_encoder(
         config.model.hsi_encoder,
         in_channels=hsi_bands,
@@ -146,43 +214,43 @@ def _build_model(config: ExperimentConfig, hsi_bands: int) -> HSILidarOVSegmento
         in_channels=3,
         feature_dim=config.model.feature_dim,
     )
-    teacher_encoder = _build_visual_encoder(
-        config.model.teacher_encoder,
+    structure_teacher_encoder = _build_visual_encoder(
+        config.model.structure_teacher_encoder,
         in_channels=3,
         feature_dim=config.model.feature_dim,
         force_frozen=True,
     )
-    return HSILidarOVSegmentor(
-        hsi_encoder,
-        lidar_encoder,
-        teacher_encoder,
-        config.model.feature_dim,
-        config.model.text_dim,
-        freeze_teacher=True,
+    semantic_config = config.model.semantic_teacher_encoder
+    if semantic_config.kind == "remoteclip":
+        remoteclip, tokenizer = _load_open_clip(config)
+        text_embeddings = _encode_text_embeddings(config, remoteclip, tokenizer)
+        visual = getattr(remoteclip, "visual", None)
+        if not isinstance(visual, nn.Module):
+            raise ConfigError("RemoteCLIP 模型必须公开 torch.nn.Module 类型的 visual 视觉塔")
+        semantic_teacher_encoder = RemoteClipVisionAdapter(
+            visual,
+            tuple(semantic_config.feature_blocks),  # type: ignore[arg-type]
+            config.model.feature_dim,
+            frozen=True,
+        )
+    else:
+        semantic_teacher_encoder = _build_visual_encoder(
+            semantic_config,
+            in_channels=3,
+            feature_dim=config.model.feature_dim,
+            force_frozen=True,
+        )
+        text_embeddings = _build_text_embeddings(config)
+    model = HSILidarOVSegmentor(
+        hsi_encoder=hsi_encoder,
+        lidar_encoder=lidar_encoder,
+        structure_teacher_encoder=structure_teacher_encoder,
+        semantic_teacher_encoder=semantic_teacher_encoder,
+        feature_dim=config.model.feature_dim,
+        text_dim=config.model.text_dim,
+        freeze_teachers=True,
     )
-
-
-def _build_text_embeddings(config: ExperimentConfig) -> torch.Tensor:
-    if config.model.clip_checkpoint is None:
-        LOGGER.warning(
-            "clip_checkpoint=null: 使用确定性哈希文本原型; "
-            "仅适合离线冒烟和消融, 不代表 CLIP 开放词汇能力"
-        )
-        return deterministic_text_embeddings(config.data.class_names, config.model.text_dim)
-    try:
-        import open_clip
-    except ImportError as error:
-        raise ConfigError("使用 CLIP 权重时必须安装 pretrained 可选依赖") from error
-    model = open_clip.create_model(config.model.clip_model_name, pretrained=None)
-    _load_local_weights(model, config.model.clip_checkpoint)
-    tokenizer = open_clip.get_tokenizer(config.model.clip_model_name)
-    encoder = ClipTextEncoder(model, tokenizer, config.model.prompt_templates)
-    embeddings = encoder.encode(config.data.class_names)
-    if embeddings.shape[1] != config.model.text_dim:
-        raise ConfigError(
-            f"CLIP 文本维度为 {embeddings.shape[1]}, 但 model.text_dim={config.model.text_dim}"
-        )
-    return embeddings.cpu()
+    return model, text_embeddings
 
 
 def _device(config: ExperimentConfig) -> torch.device:
@@ -284,8 +352,7 @@ def _train_command(args: argparse.Namespace) -> int:
     torch.manual_seed(config.seed)
     scene = load_scene(config.data)
     stats = fit_normalization(scene)
-    text_embeddings = _build_text_embeddings(config)
-    model = _build_model(config, scene.hsi.shape[-1])
+    model, text_embeddings = _build_model_and_text(config, scene.hsi.shape[-1])
     optimizer = _optimizer(model, config)
     objective = OpenVocabularyObjective(config.loss, config.data.seen_class_ids)
     trainer = Trainer(
@@ -383,8 +450,7 @@ def _evaluate_command(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     device = _device(config)
     scene = load_scene(config.data)
-    text_embeddings = _build_text_embeddings(config)
-    model = _build_model(config, scene.hsi.shape[-1])
+    model, text_embeddings = _build_model_and_text(config, scene.hsi.shape[-1])
     optimizer = _optimizer(model, config)
     state = load_checkpoint(
         args.checkpoint,

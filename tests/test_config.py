@@ -55,14 +55,16 @@ def _valid_config_dict() -> dict[str, object]:
         "model": {
             "hsi_encoder": {"kind": "native", "checkpoint": None},
             "lidar_encoder": {"kind": "native", "checkpoint": None},
-            "teacher_encoder": {"kind": "native", "checkpoint": None},
+            "structure_teacher_encoder": {"kind": "native", "checkpoint": None},
+            "semantic_teacher_encoder": {"kind": "native", "checkpoint": None},
             "clip_checkpoint": None,
             "feature_dim": 64,
             "text_dim": 32,
             "terrain_window": 5,
         },
         "loss": {
-            "teacher_weight": 1.0,
+            "structure_teacher_weight": 1.0,
+            "semantic_teacher_weight": 1.0,
             "cross_weight": 0.5,
             "gate_weight": 0.01,
             "private_weight": 0.01,
@@ -157,6 +159,60 @@ def test_encoder_config_rejects_frozen_partial_unfreezing() -> None:
             frozen=True,
             unfreeze_blocks=2,
         )
+
+
+@pytest.mark.parametrize("kind", ["hypersigma", "dinov2", "dinov3_vit", "dinov3_convnext"])
+def test_external_encoder_kinds_require_factory(kind: str) -> None:
+    with pytest.raises(ConfigError, match="factory"):
+        EncoderConfig(kind=kind, checkpoint=Path("weights.pt"))
+
+
+def test_remoteclip_encoder_does_not_require_factory() -> None:
+    config = EncoderConfig(
+        kind="remoteclip",
+        checkpoint=Path("remoteclip.pt"),
+        model_name="ViT-L-14",
+        frozen=True,
+    )
+
+    assert config.factory is None
+
+
+def test_remoteclip_teacher_must_share_text_tower_checkpoint(tmp_path: Path) -> None:
+    values = _valid_config_dict()
+    model = values["model"]
+    assert isinstance(model, dict)
+    model["clip_checkpoint"] = "text.pt"
+    model["semantic_teacher_encoder"] = {
+        "kind": "remoteclip",
+        "checkpoint": "vision.pt",
+        "model_name": "ViT-B-32",
+        "frozen": True,
+    }
+    path = tmp_path / "mismatched-remoteclip.yaml"
+    path.write_text(yaml.safe_dump(values), encoding="utf-8")
+
+    with pytest.raises(ConfigError, match=r"同一.*checkpoint"):
+        load_config(path, check_files=False)
+
+
+def test_remoteclip_teacher_must_share_text_tower_model_name(tmp_path: Path) -> None:
+    values = _valid_config_dict()
+    model = values["model"]
+    assert isinstance(model, dict)
+    model["clip_checkpoint"] = "remoteclip.pt"
+    model["clip_model_name"] = "ViT-B-32"
+    model["semantic_teacher_encoder"] = {
+        "kind": "remoteclip",
+        "checkpoint": "remoteclip.pt",
+        "model_name": "ViT-L-14",
+        "frozen": True,
+    }
+    path = tmp_path / "mismatched-model-name.yaml"
+    path.write_text(yaml.safe_dump(values), encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="model_name"):
+        load_config(path, check_files=False)
 
 
 def test_model_config_rejects_hugging_face_hub_clip_name(tmp_path: Path) -> None:

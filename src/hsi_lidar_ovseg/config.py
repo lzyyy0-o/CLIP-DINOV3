@@ -105,7 +105,15 @@ class EncoderConfig:
     unfreeze_blocks: int = 0
 
     def __post_init__(self) -> None:
-        if self.kind not in {"native", "hypersigma", "dinov2"}:
+        supported = {
+            "native",
+            "hypersigma",
+            "dinov2",
+            "dinov3_vit",
+            "dinov3_convnext",
+            "remoteclip",
+        }
+        if self.kind not in supported:
             raise ConfigError(f"不支持的 encoder.kind: {self.kind}")
         if (
             len(self.feature_blocks) != 4
@@ -118,8 +126,12 @@ class EncoderConfig:
             raise ConfigError("frozen=true 时 unfreeze_blocks 必须为 0")
         if self.kind != "native" and self.checkpoint is None:
             raise ConfigError(f"encoder.kind={self.kind} 时必须提供 checkpoint")
-        if self.kind != "native" and not self.factory:
+        if self.kind in {"hypersigma", "dinov2", "dinov3_vit", "dinov3_convnext"} and not (
+            self.factory
+        ):
             raise ConfigError(f"encoder.kind={self.kind} 时必须提供 factory")
+        if self.kind == "remoteclip" and self.factory is not None:
+            raise ConfigError("encoder.kind=remoteclip 由 OpenCLIP 创建, 不得提供 factory")
 
     def validate_files(self) -> None:
         """Require external checkpoints to exist."""
@@ -134,7 +146,8 @@ class ModelConfig:
 
     hsi_encoder: EncoderConfig
     lidar_encoder: EncoderConfig
-    teacher_encoder: EncoderConfig
+    structure_teacher_encoder: EncoderConfig
+    semantic_teacher_encoder: EncoderConfig
     clip_checkpoint: Path | None
     clip_model_name: str = "ViT-B-32"
     prompt_templates: tuple[str, ...] = (
@@ -160,13 +173,20 @@ class ModelConfig:
             raise ConfigError("每个 prompt_templates 项必须且只能包含一个 {} 占位符")
         if self.terrain_window <= 0 or self.terrain_window % 2 == 0:
             raise ConfigError("terrain_window 必须为正奇数")
+        semantic = self.semantic_teacher_encoder
+        if semantic.kind == "remoteclip":
+            if semantic.checkpoint != self.clip_checkpoint:
+                raise ConfigError("RemoteCLIP 语义教师与文本塔必须使用同一个 checkpoint")
+            if semantic.model_name is not None and semantic.model_name != self.clip_model_name:
+                raise ConfigError("RemoteCLIP 语义教师 model_name 必须与 clip_model_name 相同")
 
     def validate_files(self) -> None:
         """Validate every configured local model artifact."""
 
         self.hsi_encoder.validate_files()
         self.lidar_encoder.validate_files()
-        self.teacher_encoder.validate_files()
+        self.structure_teacher_encoder.validate_files()
+        self.semantic_teacher_encoder.validate_files()
         if self.clip_checkpoint is not None and not self.clip_checkpoint.is_file():
             raise ConfigError(f"CLIP 检查点不存在: {self.clip_checkpoint}")
 
@@ -175,7 +195,8 @@ class ModelConfig:
 class LossConfig:
     """Weights for supervised, alignment, and regularization terms."""
 
-    teacher_weight: float = 1.0
+    structure_teacher_weight: float = 1.0
+    semantic_teacher_weight: float = 1.0
     cross_weight: float = 0.5
     gate_weight: float = 0.01
     private_weight: float = 0.01
@@ -183,7 +204,8 @@ class LossConfig:
 
     def __post_init__(self) -> None:
         weights = {
-            "teacher_weight": self.teacher_weight,
+            "structure_teacher_weight": self.structure_teacher_weight,
+            "semantic_teacher_weight": self.semantic_teacher_weight,
             "cross_weight": self.cross_weight,
             "gate_weight": self.gate_weight,
             "private_weight": self.private_weight,
@@ -325,7 +347,12 @@ def _decode_model(raw: object) -> ModelConfig:
     mapping = _require_mapping(raw, "model")
     _reject_unknown(mapping, ModelConfig, "model")
     values = dict(mapping)
-    for field_name in ("hsi_encoder", "lidar_encoder", "teacher_encoder"):
+    for field_name in (
+        "hsi_encoder",
+        "lidar_encoder",
+        "structure_teacher_encoder",
+        "semantic_teacher_encoder",
+    ):
         values[field_name] = _decode_encoder(values.get(field_name), f"model.{field_name}")
     values["clip_checkpoint"] = _path(
         values.get("clip_checkpoint"), "model.clip_checkpoint", optional=True

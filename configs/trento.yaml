@@ -23,7 +23,8 @@ data:
 model:
   hsi_encoder: {kind: native, checkpoint: null}
   lidar_encoder: {kind: native, checkpoint: null}
-  teacher_encoder: {kind: native, checkpoint: null, frozen: true}
+  structure_teacher_encoder: {kind: native, checkpoint: null, frozen: true}
+  semantic_teacher_encoder: {kind: native, checkpoint: null, frozen: true}
   clip_checkpoint: null
   clip_model_name: ViT-B-32
   prompt_templates: ["a remote sensing image of {}", "an aerial view of {}"]
@@ -31,5 +32,5 @@ model:
   text_dim: 512
   terrain_window: 9
 
-loss: {teacher_weight: 1.0, cross_weight: 0.5, gate_weight: 0.01, private_weight: 0.01, temperature: 0.1}
+loss: {structure_teacher_weight: 1.0, semantic_teacher_weight: 1.0, cross_weight: 0.5, gate_weight: 0.01, private_weight: 0.01, temperature: 0.1}
 train: {tile_size: 224, overlap: 56, min_seen_pixels: 1, batch_size: 2, epochs: 20, learning_rate: 0.0001, backbone_learning_rate: 0.00001, weight_decay: 0.01, gradient_clip: 1.0, amp: true, device: cuda}

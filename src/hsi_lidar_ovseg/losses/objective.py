@@ -113,11 +113,24 @@ class OpenVocabularyObjective(nn.Module):
         segmentation = functional.cross_entropy(pixel_logits, targets)
 
         features = output.alignment_features
-        required = {"hsi", "lidar", "teacher", "fused"}
+        required = {
+            "hsi",
+            "lidar",
+            "structure_teacher",
+            "semantic_teacher",
+            "fused",
+        }
         if set(features) != required:
             raise LossError(f"alignment_features 必须包含 {sorted(required)}")
-        hsi_teacher = self._alignment_loss(features["hsi"], features["teacher"], valid_mask)
-        lidar_teacher = self._alignment_loss(features["lidar"], features["teacher"], valid_mask)
+        hsi_structure = self._alignment_loss(
+            features["hsi"], features["structure_teacher"], valid_mask
+        )
+        lidar_structure = self._alignment_loss(
+            features["lidar"], features["structure_teacher"], valid_mask
+        )
+        fused_semantic = self._alignment_loss(
+            features["fused"], features["semantic_teacher"], valid_mask
+        )
         hsi_lidar = self._alignment_loss(features["hsi"], features["lidar"], valid_mask)
         gate = torch.stack([(gate_map.mean() - 0.5).square() for gate_map in output.gates]).mean()
         private = self._private_loss(
@@ -125,7 +138,8 @@ class OpenVocabularyObjective(nn.Module):
         )
         total = (
             segmentation
-            + self.config.teacher_weight * (hsi_teacher + lidar_teacher)
+            + self.config.structure_teacher_weight * (hsi_structure + lidar_structure)
+            + self.config.semantic_teacher_weight * fused_semantic
             + self.config.cross_weight * hsi_lidar
             + self.config.gate_weight * gate
             + self.config.private_weight * private
@@ -133,8 +147,9 @@ class OpenVocabularyObjective(nn.Module):
         losses = {
             "total": total,
             "segmentation": segmentation,
-            "hsi_teacher": hsi_teacher,
-            "lidar_teacher": lidar_teacher,
+            "hsi_structure": hsi_structure,
+            "lidar_structure": lidar_structure,
+            "fused_semantic": fused_semantic,
             "hsi_lidar": hsi_lidar,
             "gate": gate,
             "private": private,

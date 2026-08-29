@@ -21,7 +21,8 @@ def _output_fixture() -> SegmentationOutput:
         alignment_features={
             "hsi": levels,
             "lidar": tuple(feature + 0.1 for feature in levels),
-            "teacher": tuple(feature.detach() + 0.05 for feature in levels),
+            "structure_teacher": tuple(feature.detach() + 0.05 for feature in levels),
+            "semantic_teacher": tuple(feature.detach() + 0.03 for feature in levels),
             "fused": tuple(feature + 0.02 for feature in levels),
         },
         gates=tuple(torch.sigmoid(feature[:, :1]) for feature in levels),
@@ -66,11 +67,36 @@ def test_objective_returns_finite_components_and_gradients() -> None:
     assert set(losses) == {
         "total",
         "segmentation",
-        "hsi_teacher",
-        "lidar_teacher",
+        "hsi_structure",
+        "lidar_structure",
+        "fused_semantic",
         "hsi_lidar",
         "gate",
         "private",
     }
     assert all(torch.isfinite(value) for value in losses.values())
     losses["total"].backward()
+
+
+def test_objective_applies_independent_teacher_weights() -> None:
+    config = LossConfig(
+        structure_teacher_weight=2.0,
+        semantic_teacher_weight=3.0,
+        cross_weight=4.0,
+        gate_weight=5.0,
+        private_weight=6.0,
+    )
+    objective = OpenVocabularyObjective(config, seen_class_ids=(1, 2))
+    labels = torch.ones(1, 8, 8, dtype=torch.long)
+
+    losses = objective(_output_fixture(), labels, torch.ones_like(labels, dtype=torch.bool))
+
+    expected = (
+        losses["segmentation"]
+        + 2.0 * (losses["hsi_structure"] + losses["lidar_structure"])
+        + 3.0 * losses["fused_semantic"]
+        + 4.0 * losses["hsi_lidar"]
+        + 5.0 * losses["gate"]
+        + 6.0 * losses["private"]
+    )
+    torch.testing.assert_close(losses["total"], expected)
