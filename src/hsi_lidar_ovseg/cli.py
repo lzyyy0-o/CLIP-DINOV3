@@ -58,6 +58,7 @@ from hsi_lidar_ovseg.models import (
     NativePyramidEncoder,
     RemoteClipVisionAdapter,
 )
+from hsi_lidar_ovseg.models.hypersigma_bridge import HyperSigmaBridge, load_hypersigma_weights
 
 LOGGER = logging.getLogger(__name__)
 
@@ -122,13 +123,38 @@ def _build_visual_encoder(
         return NativePyramidEncoder(in_channels)
     if config.kind == "remoteclip":
         raise ConfigError("RemoteCLIP 视觉塔必须通过共享模型构建流程创建")
-    assert config.factory is not None and config.checkpoint is not None
+    assert config.factory is not None
     factory = _resolve_factory(config.factory)
-    kwargs = {} if config.model_name is None else {"model_name": config.model_name}
-    backbone = factory(**kwargs)
+    if config.kind == "hypersigma":
+        assert config.source_dir is not None
+        assert config.spatial_checkpoint is not None and config.spectral_checkpoint is not None
+        assert config.pretrained_in_channels is not None
+        kwargs = {
+            "source_dir": config.source_dir,
+            "model_name": config.model_name or "base",
+            "in_channels": in_channels,
+            "pretrained_in_channels": config.pretrained_in_channels,
+            "feature_blocks": tuple(config.feature_blocks),
+        }
+    else:
+        assert config.checkpoint is not None
+        kwargs = {
+            "source_dir": config.source_dir,
+            "model_name": config.model_name,
+            "in_channels": 3,
+        }
+    try:
+        backbone = factory(**kwargs)
+    except TypeError as error:
+        raise ConfigError(f"编码器工厂参数不兼容 {config.factory}: {error}") from error
     if not isinstance(backbone, nn.Module):
         raise ConfigError(f"编码器工厂必须返回 torch.nn.Module: {config.factory}")
-    _load_local_weights(backbone, config.checkpoint)
+    if config.kind == "hypersigma":
+        if not isinstance(backbone, HyperSigmaBridge):
+            raise ConfigError("HyperSIGMA 工厂必须返回 HyperSigmaBridge")
+        load_hypersigma_weights(backbone, config.spatial_checkpoint, config.spectral_checkpoint)
+    else:
+        _load_local_weights(backbone, config.checkpoint)
     frozen = force_frozen or config.frozen
     unfreeze_blocks = 0 if force_frozen else config.unfreeze_blocks
     blocks = tuple(config.feature_blocks)
