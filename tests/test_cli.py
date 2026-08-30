@@ -48,7 +48,7 @@ def test_cli_help_lists_commands() -> None:
 
 
 def test_cli_validates_all_example_configs_without_local_files() -> None:
-    for name in ("houston2013.yaml", "trento.yaml", "muufl.yaml"):
+    for name in ("houston2013.yaml", "trento.yaml", "muufl.yaml", "pretrained.yaml"):
         result = subprocess.run(
             [
                 sys.executable,

@@ -15,6 +15,7 @@ from hsi_lidar_ovseg.models.protocols import FeaturePyramid, PyramidEncoder, Tex
 from hsi_lidar_ovseg.models.remoteclip import RemoteClipVisionAdapter
 
 __all__ = [
+    "ChannelAdapter",
     "ClipTextEncoder",
     "DinoV2Adapter",
     "DinoV3ConvNeXtAdapter",
@@ -22,7 +23,6 @@ __all__ = [
     "FeaturePyramid",
     "HSILidarOVSegmentor",
     "HyperSigmaAdapter",
-    "ChannelAdapter",
     "NativePyramidEncoder",
     "PyramidEncoder",
     "RemoteClipVisionAdapter",

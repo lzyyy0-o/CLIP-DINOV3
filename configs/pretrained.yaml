@@ -1,0 +1,65 @@
+name: houston2013_pretrained_ovseg
+seed: 13
+output_dir: outputs/houston2013_pretrained
+
+data:
+  name: Houston 2013
+  hsi_path: data/houston2013/hsi.mat
+  lidar_path: data/houston2013/lidar.mat
+  labels_path: data/houston2013/labels.mat
+  train_mask_path: data/houston2013/train_mask.mat
+  test_mask_path: data/houston2013/test_mask.mat
+  hsi_key: HSI
+  lidar_key: LiDAR
+  labels_key: labels
+  train_mask_key: train_mask
+  test_mask_key: test_mask
+  class_names: [healthy grass, stressed grass, synthetic grass, trees, soil, water, residential, commercial, road, highway, railway, parking lot 1, parking lot 2, tennis court, running track]
+  seen_class_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  unseen_class_ids: [11, 12, 13, 14, 15]
+  pseudo_rgb_indices: [60, 30, 10]
+
+model:
+  hsi_encoder:
+    kind: hypersigma
+    factory: hsi_lidar_ovseg.models.factories:create_hypersigma
+    source_dir: third_party/hypersigma
+    spatial_checkpoint: weights/hypersigma/spat-vit-base-ultra-checkpoint-1599.pth
+    spectral_checkpoint: weights/hypersigma/spec-vit-base-ultra-checkpoint-1599.pth
+    pretrained_in_channels: 100
+    model_name: base
+    feature_blocks: [3, 5, 7, 11]
+    frozen: false
+    unfreeze_blocks: 2
+  lidar_encoder:
+    kind: dinov3_convnext
+    factory: hsi_lidar_ovseg.models.factories:create_dinov3
+    source_dir: third_party/dinov3
+    checkpoint: weights/dinov3/dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth
+    model_name: dinov3_convnext_tiny
+    feature_blocks: [0, 1, 2, 3]
+    frozen: false
+    unfreeze_blocks: 1
+  structure_teacher_encoder:
+    kind: dinov3_vit
+    factory: hsi_lidar_ovseg.models.factories:create_dinov3
+    source_dir: third_party/dinov3
+    checkpoint: weights/dinov3/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth
+    model_name: dinov3_vitb16
+    feature_blocks: [2, 5, 8, 11]
+    frozen: true
+  semantic_teacher_encoder:
+    kind: remoteclip
+    checkpoint: weights/remoteclip/RemoteCLIP-ViT-L-14.pt
+    model_name: ViT-L-14
+    feature_blocks: [5, 11, 17, 23]
+    frozen: true
+  clip_checkpoint: weights/remoteclip/RemoteCLIP-ViT-L-14.pt
+  clip_model_name: ViT-L-14
+  prompt_templates: ["a remote sensing image of {}", "an aerial view of {}"]
+  feature_dim: 256
+  text_dim: 768
+  terrain_window: 9
+
+loss: {structure_teacher_weight: 1.0, semantic_teacher_weight: 1.0, cross_weight: 0.5, gate_weight: 0.01, private_weight: 0.01, temperature: 0.1}
+train: {tile_size: 224, overlap: 56, min_seen_pixels: 1, class_aware_sampling: true, class_aware_fraction: 0.7, validation_fraction: 0.1, early_stopping_patience: 20, early_stopping_min_delta: 0.0, cosine_eta_min: 0.000001, batch_size: 1, epochs: 100, learning_rate: 0.0001, backbone_learning_rate: 0.00001, weight_decay: 0.01, gradient_clip: 1.0, amp: true, device: cuda}

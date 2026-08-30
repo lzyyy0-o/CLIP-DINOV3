@@ -136,9 +136,13 @@ class EncoderConfig:
             raise ConfigError("encoder.kind=remoteclip 由 OpenCLIP 创建, 不得提供 factory")
         if self.kind == "hypersigma":
             if self.checkpoint is not None:
-                raise ConfigError("HyperSIGMA 使用 spatial_checkpoint 与 spectral_checkpoint, 不得提供 checkpoint")
+                raise ConfigError(
+                    "HyperSIGMA 使用 spatial_checkpoint 与 spectral_checkpoint, 不得提供 checkpoint"
+                )
             if self.spatial_checkpoint is None or self.spectral_checkpoint is None:
-                raise ConfigError("HyperSIGMA 必须同时提供 spatial_checkpoint 与 spectral_checkpoint")
+                raise ConfigError(
+                    "HyperSIGMA 必须同时提供 spatial_checkpoint 与 spectral_checkpoint"
+                )
             if self.pretrained_in_channels is None or self.pretrained_in_channels <= 0:
                 raise ConfigError("HyperSIGMA 必须提供正整数 pretrained_in_channels")
         elif self.spatial_checkpoint is not None or self.spectral_checkpoint is not None:

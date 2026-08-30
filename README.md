@@ -126,19 +126,32 @@ train:
 
 外部视觉编码器需提供一个不访问网络的 Python 工厂和本地检查点，例如：
 
+完整模板见 [`configs/pretrained.yaml`](configs/pretrained.yaml)。先安装官方源码所需依赖：
+
+```powershell
+pip install -e ".[pretrained]"
+hsi-lidar-ovseg validate-config configs/pretrained.yaml
+```
+
+该验证命令只检查本地目录与权重文件，不会联网下载任何内容。HyperSIGMA、DINOv3 和 RemoteCLIP 源码应分别位于 `third_party/hypersigma`、`third_party/dinov3`、`third_party/remoteclip`；权重文件名和路径以模板为准。
+
 ```yaml
 model:
   hsi_encoder:
     kind: hypersigma
-    factory: third_party.hypersigma:create_model
+    factory: hsi_lidar_ovseg.models.factories:create_hypersigma
+    source_dir: third_party/hypersigma
     model_name: base
-    checkpoint: weights/hypersigma.pt
-    feature_blocks: [2, 5, 8, 11]
+    spatial_checkpoint: weights/hypersigma/spat-vit-base-ultra-checkpoint-1599.pth
+    spectral_checkpoint: weights/hypersigma/spec-vit-base-ultra-checkpoint-1599.pth
+    pretrained_in_channels: 100
+    feature_blocks: [3, 5, 7, 11]
     frozen: false
     unfreeze_blocks: 2
   lidar_encoder:
     kind: dinov3_convnext
-    factory: third_party.dinov3:create_model
+    factory: hsi_lidar_ovseg.models.factories:create_dinov3
+    source_dir: third_party/dinov3
     model_name: dinov3_convnext_tiny
     checkpoint: weights/dinov3-convnext-tiny.pt
     feature_blocks: [0, 1, 2, 3]
@@ -146,7 +159,8 @@ model:
     unfreeze_blocks: 1
   structure_teacher_encoder:
     kind: dinov3_vit
-    factory: third_party.dinov3:create_model
+    factory: hsi_lidar_ovseg.models.factories:create_dinov3
+    source_dir: third_party/dinov3
     model_name: dinov3_vitb16
     checkpoint: weights/dinov3-vit.pt
     feature_blocks: [2, 5, 8, 11]
@@ -174,13 +188,13 @@ loss:
   temperature: 0.1
 ```
 
-工厂格式是 `package.module:callable`。工厂应返回已构造但未加载权重的 `torch.nn.Module`；本项目随后严格加载本地状态字典。HyperSIGMA 和 DINOv3 ViT 主干需公开 `patch_size`、`embed_dim`/`num_features` 和中间层接口；DINOv3 ConvNeXt 需公开 `embed_dims`、四个 `stages`、四个 `downsample_layers` 以及 `get_intermediate_layers`。
+工厂格式是 `package.module:callable`。项目工厂只构造未加载权重的官方主干，随后严格加载本地状态字典。HyperSIGMA 的空间、光谱权重必须成对提供；项目会先把数据集 HSI 波段映射到 `pretrained_in_channels`，再以光谱分支逐尺度调制空间分支。LiDAR 在 DINOv3 前通过可训练 `1×1` 映射变为 3 通道，官方 RGB 权重不会因输入通道不同而失配。
 
 `remoteclip` 不配置 `factory`，而是由本地 OpenCLIP 注册结构创建。其 `checkpoint` 必须与 `clip_checkpoint` 相同，`model_name` 若提供则必须等于 `clip_model_name`。CLI 只加载一次完整 RemoteCLIP：先生成文本原型，再把同一实例的视觉塔装入语义教师，避免在显存中保留两份权重。
 
 `clip_model_name` 必须是 OpenCLIP 本地注册的模型结构；为防止隐式联网，配置会拒绝 `hf-hub:` 模型名。自定义视觉工厂同样不得在构造过程中下载权重或配置。
 
-该完整组合明显重于原生配置。以 `224×224`、AMP、batch size 1 为起点较稳妥；显存峰值取决于 HyperSIGMA/DINOv3/RemoteCLIP 的具体规模和解冻层数。若显存不足，依次减小 batch size、把 LiDAR 学生的 `unfreeze_blocks` 设为 `0`、启用梯度累积，再考虑缩小主干。教师虽不保存反向图，仍需驻留权重并保存四层投影特征。
+该完整组合明显重于原生配置。以 `224×224`、AMP、batch size 1 为起点，预计峰值为 **12–16 GiB**；建议使用 24 GB GPU。关闭 AMP 时约需 18–24 GiB，完全微调两个学生主干时约需 28–40 GiB。若显存不足，依次减小 batch size、把 LiDAR 学生的 `unfreeze_blocks` 设为 `0`、启用梯度累积，再考虑缩小主干。教师虽不保存反向图，仍需驻留权重并保存四层投影特征。
 
 ## 训练、恢复与评估
 

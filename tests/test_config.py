@@ -276,3 +276,12 @@ def test_model_config_rejects_hugging_face_hub_clip_name(tmp_path: Path) -> None
 
     with pytest.raises(ConfigError, match="hf-hub"):
         load_config(path, check_files=False)
+
+
+def test_pretrained_template_has_only_local_external_resources() -> None:
+    config = load_config(Path("configs/pretrained.yaml"), check_files=False)
+
+    assert config.model.hsi_encoder.spatial_checkpoint is not None
+    assert config.model.hsi_encoder.spectral_checkpoint is not None
+    assert config.model.lidar_encoder.source_dir == Path("third_party/dinov3")
+    assert config.model.semantic_teacher_encoder.kind == "remoteclip"
