@@ -4,6 +4,8 @@ import numpy as np
 import torch
 from torch import nn
 
+from hsi_lidar_ovseg.cli import _cosine_scheduler
+from hsi_lidar_ovseg.config import TrainConfig
 from hsi_lidar_ovseg.config import LossConfig
 from hsi_lidar_ovseg.data import SceneArrays
 from hsi_lidar_ovseg.engine import Trainer, sliding_window_predict
@@ -25,6 +27,20 @@ class ConstantSegmentor(nn.Module):
         embeddings = torch.ones(batch, text_embeddings.shape[1], height, width, device=hsi.device)
         embeddings = torch.nn.functional.normalize(embeddings, dim=1)
         return SegmentationOutput(logits, embeddings, {}, ())
+
+
+def test_cosine_scheduler_uses_total_training_steps() -> None:
+    parameter = nn.Parameter(torch.ones(()))
+    optimizer = torch.optim.AdamW([parameter], lr=1e-4)
+
+    scheduler = _cosine_scheduler(
+        optimizer,
+        TrainConfig(epochs=3, cosine_eta_min=1e-6),
+        steps_per_epoch=5,
+    )
+
+    assert scheduler.T_max == 15
+    assert scheduler.eta_min == 1e-6
 
 
 def test_cpu_training_step_updates_trainable_parameter() -> None:

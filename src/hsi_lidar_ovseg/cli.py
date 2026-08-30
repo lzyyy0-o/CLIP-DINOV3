@@ -17,12 +17,14 @@ import numpy as np
 import torch
 import torch.nn.functional as functional
 from torch import nn
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 
 from hsi_lidar_ovseg.config import (
     ConfigError,
     EncoderConfig,
     ExperimentConfig,
+    TrainConfig,
     load_config,
 )
 from hsi_lidar_ovseg.data import DataError, NormalizationStats, fit_normalization, load_scene
@@ -277,6 +279,21 @@ def _optimizer(model: nn.Module, config: ExperimentConfig) -> torch.optim.AdamW:
     if not groups:
         raise ConfigError("模型没有可训练参数")
     return torch.optim.AdamW(groups, weight_decay=config.train.weight_decay)
+
+
+def _cosine_scheduler(
+    optimizer: torch.optim.Optimizer,
+    config: ExperimentConfig | TrainConfig,
+    steps_per_epoch: int,
+) -> CosineAnnealingLR:
+    if steps_per_epoch <= 0:
+        raise ConfigError("训练 DataLoader 必须至少包含一个批次")
+    train = config.train if isinstance(config, ExperimentConfig) else config
+    return CosineAnnealingLR(
+        optimizer,
+        T_max=train.epochs * steps_per_epoch,
+        eta_min=train.cosine_eta_min,
+    )
 
 
 def _identity(config: ExperimentConfig, hsi_bands: int) -> CheckpointIdentity:
