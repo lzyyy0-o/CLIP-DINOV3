@@ -99,6 +99,10 @@ class EncoderConfig:
     kind: str
     checkpoint: Path | None = None
     factory: str | None = None
+    source_dir: Path | None = None
+    spatial_checkpoint: Path | None = None
+    spectral_checkpoint: Path | None = None
+    pretrained_in_channels: int | None = None
     model_name: str | None = None
     feature_blocks: tuple[int, ...] = (2, 5, 8, 11)
     frozen: bool = False
@@ -124,20 +128,49 @@ class EncoderConfig:
             raise ConfigError("unfreeze_blocks 不得为负数")
         if self.frozen and self.unfreeze_blocks:
             raise ConfigError("frozen=true 时 unfreeze_blocks 必须为 0")
-        if self.kind != "native" and self.checkpoint is None:
-            raise ConfigError(f"encoder.kind={self.kind} 时必须提供 checkpoint")
         if self.kind in {"hypersigma", "dinov2", "dinov3_vit", "dinov3_convnext"} and not (
             self.factory
         ):
             raise ConfigError(f"encoder.kind={self.kind} 时必须提供 factory")
         if self.kind == "remoteclip" and self.factory is not None:
             raise ConfigError("encoder.kind=remoteclip 由 OpenCLIP 创建, 不得提供 factory")
+        if self.kind == "hypersigma":
+            if self.checkpoint is not None:
+                raise ConfigError("HyperSIGMA 使用 spatial_checkpoint 与 spectral_checkpoint, 不得提供 checkpoint")
+            if self.spatial_checkpoint is None or self.spectral_checkpoint is None:
+                raise ConfigError("HyperSIGMA 必须同时提供 spatial_checkpoint 与 spectral_checkpoint")
+            if self.pretrained_in_channels is None or self.pretrained_in_channels <= 0:
+                raise ConfigError("HyperSIGMA 必须提供正整数 pretrained_in_channels")
+        elif self.spatial_checkpoint is not None or self.spectral_checkpoint is not None:
+            raise ConfigError("spatial_checkpoint 与 spectral_checkpoint 仅适用于 HyperSIGMA")
+        elif self.pretrained_in_channels is not None:
+            raise ConfigError("pretrained_in_channels 仅适用于 HyperSIGMA")
+        if self.kind in {"hypersigma", "dinov3_vit", "dinov3_convnext"}:
+            if self.source_dir is None:
+                raise ConfigError(f"encoder.kind={self.kind} 时必须提供 source_dir")
+        elif self.source_dir is not None:
+            raise ConfigError("source_dir 仅适用于 HyperSIGMA 与 DINOv3")
+        if self.kind in {"dinov2", "dinov3_vit", "dinov3_convnext", "remoteclip"} and (
+            self.checkpoint is None
+        ):
+            raise ConfigError(f"encoder.kind={self.kind} 时必须提供 checkpoint")
+
+    def external_weight_paths(self) -> tuple[Path, ...]:
+        """Return all strict local checkpoint paths required by this encoder."""
+
+        if self.kind == "hypersigma":
+            assert self.spatial_checkpoint is not None and self.spectral_checkpoint is not None
+            return self.spatial_checkpoint, self.spectral_checkpoint
+        return () if self.checkpoint is None else (self.checkpoint,)
 
     def validate_files(self) -> None:
         """Require external checkpoints to exist."""
 
-        if self.checkpoint is not None and not self.checkpoint.is_file():
-            raise ConfigError(f"编码器检查点不存在: {self.checkpoint}")
+        if self.source_dir is not None and not self.source_dir.is_dir():
+            raise ConfigError(f"编码器源码目录不存在: {self.source_dir}")
+        for path in self.external_weight_paths():
+            if not path.is_file():
+                raise ConfigError(f"编码器检查点不存在: {path}")
 
 
 @dataclass(frozen=True)
@@ -326,6 +359,8 @@ def _decode_encoder(raw: object, context: str) -> EncoderConfig:
     _reject_unknown(mapping, EncoderConfig, context)
     values = dict(mapping)
     values["checkpoint"] = _path(values.get("checkpoint"), f"{context}.checkpoint", optional=True)
+    for field_name in ("source_dir", "spatial_checkpoint", "spectral_checkpoint"):
+        values[field_name] = _path(values.get(field_name), f"{context}.{field_name}", optional=True)
     if "feature_blocks" in values:
         values["feature_blocks"] = _tuple(
             values["feature_blocks"], f"{context}.feature_blocks", int

@@ -198,6 +198,26 @@ def test_external_encoder_kinds_require_factory(kind: str) -> None:
         EncoderConfig(kind=kind, checkpoint=Path("weights.pt"))
 
 
+def test_hypersigma_requires_both_component_checkpoints(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="spatial_checkpoint 与 spectral_checkpoint"):
+        EncoderConfig(
+            kind="hypersigma",
+            factory="hsi_lidar_ovseg.models.factories:create_hypersigma",
+            source_dir=tmp_path,
+            spatial_checkpoint=tmp_path / "spatial.pt",
+            pretrained_in_channels=100,
+        )
+
+
+def test_dinov3_requires_source_directory(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="source_dir"):
+        EncoderConfig(
+            kind="dinov3_convnext",
+            checkpoint=tmp_path / "dino.pt",
+            factory="hsi_lidar_ovseg.models.factories:create_dinov3",
+        )
+
+
 def test_remoteclip_encoder_does_not_require_factory() -> None:
     config = EncoderConfig(
         kind="remoteclip",
