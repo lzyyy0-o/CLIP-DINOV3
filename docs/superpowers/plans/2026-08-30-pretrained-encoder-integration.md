@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-30-pretrained-encoder-integration-design.md`
 
+**Execution status (2026-08-30):** Tasks 1–5 implemented and committed. Task 6 verification completed with `ruff check src tests`, `pytest -q` (94 passed), and `python -m build --no-isolation`.
+
 ## Global Constraints
 
 - Never call `torch.hub`, Hugging Face, or a downloader during factory construction.

@@ -19,7 +19,6 @@ class ChannelAdapter(nn.Module):
             raise ValueError(f"通道适配器输入必须为 NCHW 张量, 实际形状为 {tuple(inputs.shape)}")
         if inputs.shape[1] != self.projection.in_channels:
             raise ValueError(
-                f"通道适配器期望 {self.projection.in_channels} 个输入通道, "
-                f"实际为 {inputs.shape[1]}"
+                f"通道适配器期望 {self.projection.in_channels} 个输入通道, 实际为 {inputs.shape[1]}"
             )
         return self.projection(inputs)
