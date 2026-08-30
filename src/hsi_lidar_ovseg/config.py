@@ -260,9 +260,7 @@ class TrainConfig:
             raise ConfigError("batch_size 和 epochs 必须为正整数")
         if self.learning_rate <= 0 or self.backbone_learning_rate <= 0:
             raise ConfigError("学习率必须为正数")
-        if not 0 <= self.cosine_eta_min < min(
-            self.learning_rate, self.backbone_learning_rate
-        ):
+        if not 0 <= self.cosine_eta_min < min(self.learning_rate, self.backbone_learning_rate):
             raise ConfigError("cosine_eta_min 必须非负且小于初始学习率")
         if self.weight_decay < 0 or self.gradient_clip <= 0:
             raise ConfigError("weight_decay 不得为负; gradient_clip 必须为正")

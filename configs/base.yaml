@@ -47,8 +47,12 @@ train:
   min_seen_pixels: 1
   class_aware_sampling: true
   class_aware_fraction: 0.7
+  validation_fraction: 0.1
+  early_stopping_patience: 20
+  early_stopping_min_delta: 0.0
+  cosine_eta_min: 0.000001
   batch_size: 2
-  epochs: 20
+  epochs: 100
   learning_rate: 0.0001
   backbone_learning_rate: 0.00001
   weight_decay: 0.01

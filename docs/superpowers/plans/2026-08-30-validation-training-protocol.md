@@ -239,7 +239,7 @@ Expected: failure because test_metrics.json and selection state do not exist.
 
 1. Call split_training_mask and create a SceneArrays training view with the split training mask.
 2. Fit normalization and create the training Dataset from that view.
-3. After each epoch, evaluate only validation_mask and update finite best_score/patience state.
+3. After each epoch, evaluate only validation_mask and select by seen_miou, because the validation split contains no unseen-class labels.
 4. Save selection state to last.pt; save best.pt only when validation exceeds best_score + early_stopping_min_delta; break at configured patience.
 5. Restore best.pt, compute metrics once on the original scene’s test_mask, and write test_metrics.json.
 

@@ -27,7 +27,14 @@ from hsi_lidar_ovseg.config import (
     TrainConfig,
     load_config,
 )
-from hsi_lidar_ovseg.data import DataError, NormalizationStats, fit_normalization, load_scene
+from hsi_lidar_ovseg.data import (
+    DataError,
+    NormalizationStats,
+    SceneArrays,
+    fit_normalization,
+    load_scene,
+    split_training_mask,
+)
 from hsi_lidar_ovseg.data.datasets import PairedTileDataset
 from hsi_lidar_ovseg.data.preprocessing import ChannelStats
 from hsi_lidar_ovseg.engine import (
@@ -355,6 +362,28 @@ def _metrics(
     return metrics.compute()
 
 
+def _training_scene(scene: SceneArrays, config: ExperimentConfig) -> tuple[SceneArrays, np.ndarray]:
+    training_mask, validation_mask = split_training_mask(
+        scene.labels,
+        scene.train_mask,
+        config.data.seen_class_ids,
+        config.train.validation_fraction,
+        config.seed,
+    )
+    if not np.any(validation_mask):
+        raise DataError("验证划分不包含任何已见类像素; 请检查 train_mask 或 validation_fraction")
+    return (
+        SceneArrays(
+            hsi=scene.hsi,
+            lidar=scene.lidar,
+            labels=scene.labels,
+            train_mask=training_mask,
+            test_mask=scene.test_mask,
+        ),
+        validation_mask,
+    )
+
+
 def _validate_command(args: argparse.Namespace) -> int:
     config = load_config(args.config, check_files=not args.skip_file_checks)
     LOGGER.info("配置有效: %s (%s)", config.name, config.data.name)
@@ -368,37 +397,13 @@ def _train_command(args: argparse.Namespace) -> int:
     np.random.seed(config.seed)
     torch.manual_seed(config.seed)
     scene = load_scene(config.data)
-    stats = fit_normalization(scene)
+    training_scene, validation_mask = _training_scene(scene, config)
+    stats = fit_normalization(training_scene)
     model, text_embeddings = _build_model_and_text(config, scene.hsi.shape[-1])
     optimizer = _optimizer(model, config)
     objective = OpenVocabularyObjective(config.loss, config.data.seen_class_ids)
-    trainer = Trainer(
-        model,
-        objective,
-        optimizer,
-        text_embeddings,
-        device=device,
-        gradient_clip=config.train.gradient_clip,
-        amp=config.train.amp,
-    )
-    identity = _identity(config, scene.hsi.shape[-1])
-    start_epoch = 0
-    global_step = 0
-    if args.resume is not None:
-        restored = load_checkpoint(
-            args.resume,
-            trainer.model,
-            trainer.optimizer,
-            identity,
-            scaler=trainer.scaler,
-        )
-        stats = _normalization_from_payload(restored.normalization)
-        start_epoch = restored.epoch
-        global_step = restored.global_step
-        LOGGER.info("从第 %d 轮、第 %d 步恢复", start_epoch, global_step)
-
     dataset = PairedTileDataset(
-        scene,
+        training_scene,
         stats,
         pseudo_rgb_indices=config.data.pseudo_rgb_indices,
         tile_size=config.train.tile_size,
@@ -417,8 +422,40 @@ def _train_command(args: argparse.Namespace) -> int:
         shuffle=True,
         generator=generator,
     )
-    config.output_dir.mkdir(parents=True, exist_ok=True)
+    scheduler = _cosine_scheduler(optimizer, config, len(loader))
+    trainer = Trainer(
+        model,
+        objective,
+        optimizer,
+        text_embeddings,
+        device=device,
+        gradient_clip=config.train.gradient_clip,
+        amp=config.train.amp,
+        scheduler=scheduler,
+    )
+    identity = _identity(config, scene.hsi.shape[-1])
+    start_epoch = 0
+    global_step = 0
     best_score = float("-inf")
+    epochs_without_improvement = 0
+    if args.resume is not None:
+        restored = load_checkpoint(
+            args.resume,
+            trainer.model,
+            trainer.optimizer,
+            identity,
+            scheduler=trainer.scheduler,
+            scaler=trainer.scaler,
+        )
+        stats = _normalization_from_payload(restored.normalization)
+        start_epoch = restored.epoch
+        global_step = restored.global_step
+        if restored.selection_state is not None:
+            best_score = float(restored.selection_state["best_score"])
+            epochs_without_improvement = int(restored.selection_state["epochs_without_improvement"])
+        LOGGER.info("从第 %d 轮、第 %d 步恢复", start_epoch, global_step)
+
+    config.output_dir.mkdir(parents=True, exist_ok=True)
     for epoch in range(start_epoch, config.train.epochs):
         dataset.set_epoch(epoch)
         epoch_losses: list[float] = []
@@ -426,9 +463,9 @@ def _train_command(args: argparse.Namespace) -> int:
             losses = trainer.train_step(batch)
             epoch_losses.append(losses["total"])
             global_step += 1
-        logits = sliding_window_predict(
+        validation_logits = sliding_window_predict(
             trainer.model,
-            scene,
+            training_scene,
             text_embeddings,
             config.train.tile_size,
             config.train.overlap,
@@ -437,32 +474,71 @@ def _train_command(args: argparse.Namespace) -> int:
             terrain_window=config.model.terrain_window,
             stats=stats,
         )
-        metrics = _metrics(config, logits, scene.labels, scene.test_mask)
+        validation_metrics = _metrics(config, validation_logits, scene.labels, validation_mask)
+        score = float(validation_metrics["seen_miou"])
+        improved = score > best_score + config.train.early_stopping_min_delta
+        if improved:
+            best_score = score
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
         mean_loss = float(np.mean(epoch_losses))
         LOGGER.info(
-            "轮次 %d/%d: loss=%.6f, metrics=%s",
+            "轮次 %d/%d: loss=%.6f, validation=%s",
             epoch + 1,
             config.train.epochs,
             mean_loss,
-            json.dumps(metrics, ensure_ascii=False),
+            json.dumps(validation_metrics, ensure_ascii=False),
         )
         state = TrainingState(
             identity=identity,
             model_state=trainer.model.state_dict(),
             optimizer_state=trainer.optimizer.state_dict(),
-            scheduler_state=None,
+            scheduler_state=trainer.scheduler.state_dict()
+            if trainer.scheduler is not None
+            else None,
             scaler_state=trainer.scaler.state_dict(),
             epoch=epoch + 1,
             global_step=global_step,
             normalization=_normalization_payload(stats),
             config=_primitive(config),
+            selection_state={
+                "best_score": best_score,
+                "epochs_without_improvement": epochs_without_improvement,
+            },
         )
         save_checkpoint(config.output_dir / "last.pt", state)
-        score_name = "harmonic_miou" if config.data.unseen_class_ids else "miou"
-        score = float(metrics[score_name])
-        if score > best_score:
-            best_score = score
+        if improved:
             save_checkpoint(config.output_dir / "best.pt", state)
+        if epochs_without_improvement >= config.train.early_stopping_patience:
+            LOGGER.info("验证指标连续 %d 轮未改善, 提前停止", epochs_without_improvement)
+            break
+
+    best_state = load_checkpoint(
+        config.output_dir / "best.pt",
+        trainer.model,
+        trainer.optimizer,
+        identity,
+        scheduler=trainer.scheduler,
+        scaler=trainer.scaler,
+    )
+    stats = _normalization_from_payload(best_state.normalization)
+    test_logits = sliding_window_predict(
+        trainer.model,
+        training_scene,
+        text_embeddings,
+        config.train.tile_size,
+        config.train.overlap,
+        device,
+        pseudo_rgb_indices=config.data.pseudo_rgb_indices,
+        terrain_window=config.model.terrain_window,
+        stats=stats,
+    )
+    test_metrics = _metrics(config, test_logits, scene.labels, scene.test_mask)
+    (config.output_dir / "test_metrics.json").write_text(
+        json.dumps(test_metrics, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    LOGGER.info("最终测试指标: %s", json.dumps(test_metrics, ensure_ascii=False))
     return 0
 
 
@@ -470,6 +546,7 @@ def _evaluate_command(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     device = _device(config)
     scene = load_scene(config.data)
+    training_scene, _ = _training_scene(scene, config)
     model, text_embeddings = _build_model_and_text(config, scene.hsi.shape[-1])
     optimizer = _optimizer(model, config)
     state = load_checkpoint(
@@ -481,7 +558,7 @@ def _evaluate_command(args: argparse.Namespace) -> int:
     stats = _normalization_from_payload(state.normalization)
     logits = sliding_window_predict(
         model,
-        scene,
+        training_scene,
         text_embeddings,
         config.train.tile_size,
         config.train.overlap,

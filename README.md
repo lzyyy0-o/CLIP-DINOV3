@@ -202,10 +202,13 @@ hsi-lidar-ovseg train configs/houston2013.yaml --resume outputs/houston2013/last
 hsi-lidar-ovseg evaluate configs/houston2013.yaml outputs/houston2013/best.pt
 ```
 
-每轮训练都在测试掩码上执行滑窗评估。输出目录包含：
+每轮训练完成后，程序在原始训练掩码中按已见类别确定性分层抽取 10% 标注像素构成验证集；剩余 90% 训练像素用于归一化、类别感知采样和参数更新。`best.pt` 仅按验证集 `seen_miou` 选择，余弦学习率在每个优化步更新到 `cosine_eta_min`，连续 `early_stopping_patience` 轮未超过 `early_stopping_min_delta` 时提前停止。训练结束后恢复 `best.pt`，仅在测试掩码上整图评估一次。
+
+输出目录包含：
 
 - `last.pt`：最近一轮的完整训练状态；
-- `best.pt`：按已见/未见调和 mIoU 选择的最佳状态；
+- `best.pt`：按验证集 `seen_miou` 选择的最佳状态；
+- `test_metrics.json`：训练结束后对测试掩码进行一次评估的指标；
 - `predictions.npy`：评估命令生成的一基类别预测图；
 - `metrics.json`：mIoU、类别准确率、总体准确率、已见/未见 mIoU、调和 mIoU 和逐类指标。
 

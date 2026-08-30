@@ -42,7 +42,7 @@ cosine_eta_min: 0.000001
 
 优化器仍使用两组学习率：新建融合/解码模块使用 `learning_rate`，可训练学生主干使用 `backbone_learning_rate`。构建 DataLoader 后创建 `CosineAnnealingLR`，令 `T_max = epochs * len(loader)`、`eta_min = cosine_eta_min`；Trainer 在每个成功优化步后推进一次调度器。
 
-每轮完成后，整图滑窗推理一次，但仅以 `validation_mask` 计算选择指标：存在未见类别时使用 `harmonic_miou`，否则使用 `miou`。若新分数严格超过 `best_score + early_stopping_min_delta`，保存 `best.pt` 并将未改善计数置零；否则计数加一。连续 `early_stopping_patience` 轮未改善时停止训练。`last.pt` 每轮保存。
+每轮完成后，整图滑窗推理一次，但仅以 `validation_mask` 计算 `seen_miou` 作为选择指标。验证掩码只从已见类训练像素中抽取，不能以必然缺少未见类的 `harmonic_miou` 选优。若新分数严格超过 `best_score + early_stopping_min_delta`，保存 `best.pt` 并将未改善计数置零；否则计数加一。连续 `early_stopping_patience` 轮未改善时停止训练。`last.pt` 每轮保存。
 
 训练循环结束后，从 `best.pt` 恢复模型和训练状态，对原始 `test_mask` 做一次完整评估，并在输出目录写入 `test_metrics.json`。测试分数不会影响保存、早停或学习率。
 

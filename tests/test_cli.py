@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -164,7 +165,7 @@ def test_remoteclip_model_is_loaded_once_for_text_and_visual_towers(
     assert embeddings.shape == (2, 3)
 
 
-def test_cli_runs_one_offline_cpu_training_epoch(tmp_path: Path) -> None:
+def test_cli_selects_on_validation_and_writes_final_test_metrics(tmp_path: Path) -> None:
     generator = np.random.default_rng(9)
     height = width = 32
     paths = {
@@ -226,8 +227,12 @@ def test_cli_runs_one_offline_cpu_training_epoch(tmp_path: Path) -> None:
             "min_seen_pixels": 1,
             "class_aware_sampling": True,
             "class_aware_fraction": 0.7,
+            "validation_fraction": 0.25,
+            "early_stopping_patience": 1,
+            "early_stopping_min_delta": 0.0,
+            "cosine_eta_min": 0.000001,
             "batch_size": 1,
-            "epochs": 1,
+            "epochs": 3,
             "learning_rate": 0.001,
             "backbone_learning_rate": 0.001,
             "weight_decay": 0.0,
@@ -252,3 +257,9 @@ def test_cli_runs_one_offline_cpu_training_epoch(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert (output_dir / "last.pt").is_file()
     assert (output_dir / "best.pt").is_file()
+    metrics = json.loads((output_dir / "test_metrics.json").read_text(encoding="utf-8"))
+    state = torch.load(output_dir / "last.pt", map_location="cpu", weights_only=True)
+
+    assert "miou" in metrics
+    assert state["scheduler_state"] is not None
+    assert state["selection_state"] is not None

@@ -5,8 +5,7 @@ import torch
 from torch import nn
 
 from hsi_lidar_ovseg.cli import _cosine_scheduler
-from hsi_lidar_ovseg.config import TrainConfig
-from hsi_lidar_ovseg.config import LossConfig
+from hsi_lidar_ovseg.config import LossConfig, TrainConfig
 from hsi_lidar_ovseg.data import SceneArrays
 from hsi_lidar_ovseg.engine import Trainer, sliding_window_predict
 from hsi_lidar_ovseg.losses import OpenVocabularyObjective
