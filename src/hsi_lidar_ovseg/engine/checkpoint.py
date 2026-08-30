@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import tempfile
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -43,6 +44,7 @@ class TrainingState:
     global_step: int
     normalization: dict[str, Tensor]
     config: dict[str, Any]
+    selection_state: dict[str, float | int] | None = None
 
 
 def _identity_payload(identity: CheckpointIdentity) -> dict[str, Any]:
@@ -60,6 +62,7 @@ def _state_payload(state: TrainingState) -> dict[str, Any]:
         "global_step": state.global_step,
         "normalization": state.normalization,
         "config": state.config,
+        "selection_state": state.selection_state,
     }
 
 
@@ -112,9 +115,35 @@ def _decode_state(payload: object, path: Path) -> TrainingState:
             global_step=int(payload["global_step"]),
             normalization=payload["normalization"],
             config=payload["config"],
+            selection_state=_decode_selection_state(payload.get("selection_state")),
         )
     except (KeyError, TypeError, ValueError) as error:
         raise CheckpointError(f"检查点字段类型无效: {error}") from error
+
+
+def _decode_selection_state(value: object) -> dict[str, float | int] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {"best_score", "epochs_without_improvement"}:
+        raise CheckpointError("检查点选择状态字段无效")
+    best_score = value["best_score"]
+    epochs_without_improvement = value["epochs_without_improvement"]
+    if (
+        isinstance(best_score, bool)
+        or not isinstance(best_score, (int, float))
+        or not math.isfinite(float(best_score))
+    ):
+        raise CheckpointError("检查点 best_score 必须是有限数")
+    if (
+        isinstance(epochs_without_improvement, bool)
+        or not isinstance(epochs_without_improvement, int)
+        or epochs_without_improvement < 0
+    ):
+        raise CheckpointError("检查点 epochs_without_improvement 必须是非负整数")
+    return {
+        "best_score": float(best_score),
+        "epochs_without_improvement": epochs_without_improvement,
+    }
 
 
 def _check_identity(actual: CheckpointIdentity, expected: CheckpointIdentity) -> None:

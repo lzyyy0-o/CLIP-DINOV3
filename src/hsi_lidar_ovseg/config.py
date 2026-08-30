@@ -226,6 +226,10 @@ class TrainConfig:
     min_seen_pixels: int = 1
     class_aware_sampling: bool = True
     class_aware_fraction: float = 0.7
+    validation_fraction: float = 0.1
+    early_stopping_patience: int = 20
+    early_stopping_min_delta: float = 0.0
+    cosine_eta_min: float = 1e-6
     batch_size: int = 2
     epochs: int = 1
     learning_rate: float = 1e-4
@@ -246,10 +250,20 @@ class TrainConfig:
             raise ConfigError("class_aware_sampling 必须是布尔值")
         if not 0.0 <= self.class_aware_fraction <= 1.0:
             raise ConfigError("class_aware_fraction 必须位于 [0, 1]")
+        if not 0.0 < self.validation_fraction < 1.0:
+            raise ConfigError("validation_fraction 必须位于 (0, 1)")
+        if self.early_stopping_patience <= 0:
+            raise ConfigError("early_stopping_patience 必须为正整数")
+        if self.early_stopping_min_delta < 0:
+            raise ConfigError("early_stopping_min_delta 不得为负数")
         if self.batch_size <= 0 or self.epochs <= 0:
             raise ConfigError("batch_size 和 epochs 必须为正整数")
         if self.learning_rate <= 0 or self.backbone_learning_rate <= 0:
             raise ConfigError("学习率必须为正数")
+        if not 0 <= self.cosine_eta_min < min(
+            self.learning_rate, self.backbone_learning_rate
+        ):
+            raise ConfigError("cosine_eta_min 必须非负且小于初始学习率")
         if self.weight_decay < 0 or self.gradient_clip <= 0:
             raise ConfigError("weight_decay 不得为负; gradient_clip 必须为正")
         if self.device not in {"cpu", "cuda"}:

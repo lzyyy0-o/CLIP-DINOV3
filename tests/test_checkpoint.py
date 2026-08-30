@@ -72,3 +72,30 @@ def test_checkpoint_round_trip_restores_model_and_counters(tmp_path: Path) -> No
     assert restored.epoch == 2
     assert restored.global_step == 17
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_checkpoint_round_trip_preserves_selection_state(tmp_path: Path) -> None:
+    model = nn.Linear(3, 2)
+    optimizer = torch.optim.AdamW(model.parameters())
+    path = tmp_path / "model.pt"
+    state = _state(model, optimizer)
+    state.selection_state = {"best_score": 0.4, "epochs_without_improvement": 3}
+    save_checkpoint(path, state)
+
+    restored = load_checkpoint(path, model, optimizer, _identity())
+
+    assert restored.selection_state == state.selection_state
+
+
+def test_checkpoint_without_selection_state_remains_loadable(tmp_path: Path) -> None:
+    model = nn.Linear(3, 2)
+    optimizer = torch.optim.AdamW(model.parameters())
+    path = tmp_path / "model.pt"
+    save_checkpoint(path, _state(model, optimizer))
+    payload = torch.load(path, map_location="cpu", weights_only=True)
+    payload.pop("selection_state", None)
+    torch.save(payload, path)
+
+    restored = load_checkpoint(path, model, optimizer, _identity())
+
+    assert restored.selection_state is None

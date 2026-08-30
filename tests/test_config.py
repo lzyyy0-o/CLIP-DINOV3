@@ -166,6 +166,21 @@ def test_train_config_rejects_invalid_class_aware_fraction(value: float) -> None
         TrainConfig(class_aware_fraction=value)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("validation_fraction", 0.0),
+        ("validation_fraction", 1.0),
+        ("early_stopping_patience", 0),
+        ("early_stopping_min_delta", -0.1),
+        ("cosine_eta_min", 1e-5),
+    ],
+)
+def test_train_config_rejects_invalid_validation_controls(field: str, value: float | int) -> None:
+    with pytest.raises(ConfigError):
+        TrainConfig(**{field: value})
+
+
 def test_encoder_config_rejects_frozen_partial_unfreezing() -> None:
     with pytest.raises(ConfigError, match="unfreeze_blocks"):
         EncoderConfig(
