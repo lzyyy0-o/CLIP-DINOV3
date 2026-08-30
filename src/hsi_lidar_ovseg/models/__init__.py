@@ -4,6 +4,7 @@ from hsi_lidar_ovseg.models.clip_text import ClipTextEncoder
 from hsi_lidar_ovseg.models.dinov2 import DinoV2Adapter
 from hsi_lidar_ovseg.models.dinov3 import DinoV3ConvNeXtAdapter, DinoV3ViTAdapter
 from hsi_lidar_ovseg.models.hypersigma import HyperSigmaAdapter
+from hsi_lidar_ovseg.models.input_adapter import ChannelAdapter
 from hsi_lidar_ovseg.models.model import (
     HSILidarOVSegmentor,
     SegmentationOutput,
@@ -21,6 +22,7 @@ __all__ = [
     "FeaturePyramid",
     "HSILidarOVSegmentor",
     "HyperSigmaAdapter",
+    "ChannelAdapter",
     "NativePyramidEncoder",
     "PyramidEncoder",
     "RemoteClipVisionAdapter",
