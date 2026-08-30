@@ -58,6 +58,7 @@ from hsi_lidar_ovseg.models import (
     NativePyramidEncoder,
     RemoteClipVisionAdapter,
 )
+from hsi_lidar_ovseg.models.dinov3_bridge import DinoV3InputBridge
 from hsi_lidar_ovseg.models.hypersigma_bridge import HyperSigmaBridge, load_hypersigma_weights
 
 LOGGER = logging.getLogger(__name__)
@@ -155,6 +156,8 @@ def _build_visual_encoder(
         load_hypersigma_weights(backbone, config.spatial_checkpoint, config.spectral_checkpoint)
     else:
         _load_local_weights(backbone, config.checkpoint)
+        if config.kind in {"dinov3_vit", "dinov3_convnext"} and in_channels != 3:
+            backbone = DinoV3InputBridge(backbone, in_channels)
     frozen = force_frozen or config.frozen
     unfreeze_blocks = 0 if force_frozen else config.unfreeze_blocks
     blocks = tuple(config.feature_blocks)

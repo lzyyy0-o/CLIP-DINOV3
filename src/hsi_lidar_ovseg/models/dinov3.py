@@ -98,6 +98,9 @@ class DinoV3ConvNeXtAdapter(nn.Module):
             for module in (*stages[split:], *downsample_layers[split:]):
                 module.requires_grad_(True)
             self._frozen_modules = tuple((*stages[:split], *downsample_layers[:split]))
+        input_adapter = getattr(self.backbone, "input_adapter", None)
+        if not frozen and isinstance(input_adapter, nn.Module):
+            input_adapter.requires_grad_(True)
 
     def forward(self, inputs: Tensor) -> FeaturePyramid:
         if inputs.ndim != 4:
