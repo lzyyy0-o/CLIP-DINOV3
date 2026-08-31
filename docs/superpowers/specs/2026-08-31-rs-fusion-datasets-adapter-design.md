@@ -19,7 +19,7 @@
 
 ## 适配层
 
-新增 `data/rs_fusion.py`，提供 `load_rs_fusion_scene(config: DataConfig) -> SceneArrays`。模块在函数内延迟导入 `rs_fusion_datasets`；缺包时抛出 `DataError`，说明执行 `pip install -r requirements.txt`。
+新增 `data/rs_fusion.py`，提供 `load_rs_fusion_scene(config: DataConfig, *, split_seed: int) -> SceneArrays`。`load_scene` 扩展为 `load_scene(config: DataConfig, *, split_seed: int = 0)` 并按 `source` 分派；CLI 用实验顶层 `seed` 传入 `split_seed`，本地文件模式忽略该参数。模块在函数内延迟导入 `rs_fusion_datasets`；缺包时抛出 `DataError`，说明执行 `pip install -r requirements.txt`。
 
 适配器按 `rs_dataset` 调用：
 
