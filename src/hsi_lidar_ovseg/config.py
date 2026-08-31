@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 import yaml
 
@@ -201,14 +201,62 @@ class EncoderConfig:
 
 
 @dataclass(frozen=True)
+class SharedLiteViTConfig:
+    """Fixed six-layer shared HSI-LiDAR Lite-ViT specification."""
+
+    patch_size: int = 16
+    embed_dim: int = 384
+    depths: tuple[int, int, int, int] = (1, 1, 2, 2)
+    num_heads: int = 6
+    mlp_ratio: float = 2.0
+
+    def __post_init__(self) -> None:
+        if self.patch_size != 16:
+            raise ConfigError("Shared Lite-ViT 必须使用 patch_size=16")
+        if self.embed_dim != 384:
+            raise ConfigError("Shared Lite-ViT 必须使用 embed_dim=384")
+        if self.depths != (1, 1, 2, 2) or sum(self.depths) != 6:
+            raise ConfigError("Shared Lite-ViT 必须使用 depths=[1, 1, 2, 2]")
+        if self.num_heads != 6:
+            raise ConfigError("Shared Lite-ViT 必须使用 num_heads=6")
+        if self.mlp_ratio != 2.0:
+            raise ConfigError("Shared Lite-ViT 必须使用 mlp_ratio=2.0")
+
+
+@dataclass(frozen=True)
+class OpenAIClipConfig:
+    """Strict local OpenAI CLIP ViT-B/16 settings."""
+
+    checkpoint: Path
+    model_name: str = "ViT-B/16"
+    feature_blocks: tuple[int, int, int, int] = (2, 5, 8, 11)
+    unfreeze_blocks: int = 2
+
+    def __post_init__(self) -> None:
+        if self.model_name != "ViT-B/16":
+            raise ConfigError("OpenAI CLIP 必须使用 model_name=ViT-B/16")
+        if self.feature_blocks != (2, 5, 8, 11):
+            raise ConfigError("OpenAI CLIP 必须使用 feature_blocks=[2, 5, 8, 11]")
+        if self.unfreeze_blocks != 2:
+            raise ConfigError("OpenAI CLIP 必须只解冻末两个 Transformer block")
+        if self.checkpoint.suffix.lower() not in {".pt", ".pth"}:
+            raise ConfigError("OpenAI CLIP checkpoint 必须为 .pt 或 .pth 文件")
+
+    def validate_files(self) -> None:
+        if not self.checkpoint.is_file():
+            raise ConfigError(f"OpenAI CLIP checkpoint 不存在: {self.checkpoint}")
+
+
+@dataclass(frozen=True)
 class ModelConfig:
     """Multimodal segmentor dimensions and backbone choices."""
 
-    hsi_encoder: EncoderConfig
-    lidar_encoder: EncoderConfig
-    structure_teacher_encoder: EncoderConfig
-    semantic_teacher_encoder: EncoderConfig
-    clip_checkpoint: Path | None
+    architecture: Literal["teacher_student", "clip_guided_shared_lite_vit"] = "teacher_student"
+    hsi_encoder: EncoderConfig | None = None
+    lidar_encoder: EncoderConfig | None = None
+    structure_teacher_encoder: EncoderConfig | None = None
+    semantic_teacher_encoder: EncoderConfig | None = None
+    clip_checkpoint: Path | None = None
     clip_model_name: str = "ViT-B-32"
     prompt_templates: tuple[str, ...] = (
         "a remote sensing image of {}",
@@ -217,6 +265,8 @@ class ModelConfig:
     feature_dim: int = 256
     text_dim: int = 512
     terrain_window: int = 9
+    shared_lite_vit: SharedLiteViTConfig | None = None
+    clip: OpenAIClipConfig | None = None
 
     def __post_init__(self) -> None:
         if self.feature_dim <= 0:
@@ -233,7 +283,38 @@ class ModelConfig:
             raise ConfigError("每个 prompt_templates 项必须且只能包含一个 {} 占位符")
         if self.terrain_window <= 0 or self.terrain_window % 2 == 0:
             raise ConfigError("terrain_window 必须为正奇数")
+        if self.architecture == "clip_guided_shared_lite_vit":
+            if self.shared_lite_vit is None or self.clip is None:
+                raise ConfigError("CLIP 引导架构必须提供 shared_lite_vit 与 clip 配置")
+            teachers = {
+                "hsi_encoder": self.hsi_encoder,
+                "lidar_encoder": self.lidar_encoder,
+                "structure_teacher_encoder": self.structure_teacher_encoder,
+                "semantic_teacher_encoder": self.semantic_teacher_encoder,
+            }
+            configured = [name for name, value in teachers.items() if value is not None]
+            if configured:
+                raise ConfigError(
+                    "CLIP 引导架构不得配置教师或旧编码器字段: " + ", ".join(configured)
+                )
+            if self.feature_dim != 512 or self.text_dim != 512:
+                raise ConfigError("CLIP 引导架构必须使用 feature_dim=text_dim=512")
+            return
+        if self.architecture != "teacher_student":
+            raise ConfigError(f"不支持的 model.architecture: {self.architecture}")
+        required = {
+            "hsi_encoder": self.hsi_encoder,
+            "lidar_encoder": self.lidar_encoder,
+            "structure_teacher_encoder": self.structure_teacher_encoder,
+            "semantic_teacher_encoder": self.semantic_teacher_encoder,
+        }
+        missing = [name for name, value in required.items() if value is None]
+        if missing:
+            raise ConfigError("教师学生架构缺少编码器字段: " + ", ".join(missing))
+        if self.shared_lite_vit is not None or self.clip is not None:
+            raise ConfigError("教师学生架构不得配置 shared_lite_vit 或 clip")
         semantic = self.semantic_teacher_encoder
+        assert semantic is not None
         if semantic.kind == "remoteclip":
             if semantic.checkpoint != self.clip_checkpoint:
                 raise ConfigError("RemoteCLIP 语义教师与文本塔必须使用同一个 checkpoint")
@@ -243,6 +324,14 @@ class ModelConfig:
     def validate_files(self) -> None:
         """Validate every configured local model artifact."""
 
+        if self.architecture == "clip_guided_shared_lite_vit":
+            assert self.clip is not None
+            self.clip.validate_files()
+            return
+        assert self.hsi_encoder is not None
+        assert self.lidar_encoder is not None
+        assert self.structure_teacher_encoder is not None
+        assert self.semantic_teacher_encoder is not None
         self.hsi_encoder.validate_files()
         self.lidar_encoder.validate_files()
         self.structure_teacher_encoder.validate_files()
@@ -255,6 +344,7 @@ class ModelConfig:
 class LossConfig:
     """Weights for supervised, alignment, and regularization terms."""
 
+    kind: Literal["teacher_student", "masked_cross_entropy"] = "teacher_student"
     structure_teacher_weight: float = 1.0
     semantic_teacher_weight: float = 1.0
     cross_weight: float = 0.5
@@ -263,6 +353,8 @@ class LossConfig:
     temperature: float = 0.1
 
     def __post_init__(self) -> None:
+        if self.kind not in {"teacher_student", "masked_cross_entropy"}:
+            raise ConfigError(f"不支持的 loss.kind: {self.kind}")
         weights = {
             "structure_teacher_weight": self.structure_teacher_weight,
             "semantic_teacher_weight": self.semantic_teacher_weight,
@@ -347,6 +439,16 @@ class ExperimentConfig:
             raise ConfigError("name 不能为空")
         if self.seed < 0:
             raise ConfigError("seed 不得为负数")
+        if (
+            self.model.architecture == "clip_guided_shared_lite_vit"
+            and self.train.tile_size != 224
+        ):
+            raise ConfigError("CLIP 引导架构必须使用 train.tile_size=224")
+        if (
+            self.model.architecture == "clip_guided_shared_lite_vit"
+            and self.loss.kind != "masked_cross_entropy"
+        ):
+            raise ConfigError("CLIP 引导架构必须使用 loss.kind=masked_cross_entropy")
         if check_files:
             self.data.validate_files()
             self.model.validate_files()
@@ -398,6 +500,33 @@ def _decode_encoder(raw: object, context: str) -> EncoderConfig:
         raise ConfigError(f"{context} 缺少或包含非法字段: {error}") from error
 
 
+def _decode_shared_lite_vit(raw: object, context: str) -> SharedLiteViTConfig:
+    mapping = _require_mapping(raw, context)
+    _reject_unknown(mapping, SharedLiteViTConfig, context)
+    values = dict(mapping)
+    if "depths" in values:
+        values["depths"] = _tuple(values["depths"], f"{context}.depths", int)
+    try:
+        return SharedLiteViTConfig(**values)
+    except TypeError as error:
+        raise ConfigError(f"{context} 缺少或包含非法字段: {error}") from error
+
+
+def _decode_openai_clip(raw: object, context: str) -> OpenAIClipConfig:
+    mapping = _require_mapping(raw, context)
+    _reject_unknown(mapping, OpenAIClipConfig, context)
+    values = dict(mapping)
+    values["checkpoint"] = _path(values.get("checkpoint"), f"{context}.checkpoint")
+    if "feature_blocks" in values:
+        values["feature_blocks"] = _tuple(
+            values["feature_blocks"], f"{context}.feature_blocks", int
+        )
+    try:
+        return OpenAIClipConfig(**values)
+    except TypeError as error:
+        raise ConfigError(f"{context} 缺少或包含非法字段: {error}") from error
+
+
 def _decode_data(raw: object) -> DataConfig:
     mapping = _require_mapping(raw, "data")
     _reject_unknown(mapping, DataConfig, "data")
@@ -433,7 +562,12 @@ def _decode_model(raw: object) -> ModelConfig:
         "structure_teacher_encoder",
         "semantic_teacher_encoder",
     ):
-        values[field_name] = _decode_encoder(values.get(field_name), f"model.{field_name}")
+        raw_encoder = values.get(field_name)
+        values[field_name] = (
+            _decode_encoder(raw_encoder, f"model.{field_name}")
+            if raw_encoder is not None
+            else None
+        )
     values["clip_checkpoint"] = _path(
         values.get("clip_checkpoint"), "model.clip_checkpoint", optional=True
     )
@@ -441,6 +575,12 @@ def _decode_model(raw: object) -> ModelConfig:
         values["prompt_templates"] = _tuple(
             values["prompt_templates"], "model.prompt_templates", str
         )
+    if "shared_lite_vit" in values:
+        values["shared_lite_vit"] = _decode_shared_lite_vit(
+            values["shared_lite_vit"], "model.shared_lite_vit"
+        )
+    if "clip" in values:
+        values["clip"] = _decode_openai_clip(values["clip"], "model.clip")
     try:
         return ModelConfig(**values)
     except TypeError as error:
