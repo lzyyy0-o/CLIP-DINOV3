@@ -11,6 +11,10 @@ def test_hsi_online_vit_uses_spectral_adapter_and_returns_four_scales() -> None:
     outputs = encoder(torch.randn(1, 6, 32, 32))
 
     assert encoder.spectral_adapter is not None
+    assert len(encoder.pyramid_projections) == 4
+    assert all(
+        isinstance(projection, torch.nn.Conv2d) for projection in encoder.pyramid_projections
+    )
     assert [item.shape for item in outputs] == [
         (1, 384, 8, 8),
         (1, 384, 4, 4),

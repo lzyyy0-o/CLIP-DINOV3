@@ -43,6 +43,9 @@ class OnlineViTPyramidEncoder(nn.Module):
             for _ in range(12)
         )
         self.norm = nn.LayerNorm(self.embed_dim)
+        self.pyramid_projections = nn.ModuleList(
+            nn.Conv2d(self.embed_dim, channels, kernel_size=1) for channels in self.out_channels
+        )
         self._reset_parameters()
 
     def _reset_parameters(self) -> None:
@@ -73,10 +76,12 @@ class OnlineViTPyramidEncoder(nn.Module):
                     self.norm(tokens).transpose(1, 2).reshape(-1, self.embed_dim, height, width)
                 )
         outputs: list[Tensor] = []
-        for feature, stride in zip(extracted, self.out_strides, strict=True):
+        for feature, projection, stride in zip(
+            extracted, self.pyramid_projections, self.out_strides, strict=True
+        ):
             outputs.append(
                 functional.interpolate(
-                    feature,
+                    projection(feature),
                     size=(max(1, inputs.shape[-2] // stride), max(1, inputs.shape[-1] // stride)),
                     mode="bilinear",
                     align_corners=False,

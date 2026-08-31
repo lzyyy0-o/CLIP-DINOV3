@@ -8,13 +8,19 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import torch
 import yaml
 from torch import nn
 
 from hsi_lidar_ovseg import cli
-from hsi_lidar_ovseg.cli import _build_model_and_text, deterministic_text_embeddings
+from hsi_lidar_ovseg.cli import (
+    _build_model_and_text,
+    _build_visual_encoder,
+    deterministic_text_embeddings,
+)
 from hsi_lidar_ovseg.config import (
+    ConfigError,
     DataConfig,
     EncoderConfig,
     ExperimentConfig,
@@ -48,7 +54,13 @@ def test_cli_help_lists_commands() -> None:
 
 
 def test_cli_validates_all_example_configs_without_local_files() -> None:
-    for name in ("houston2013.yaml", "trento.yaml", "muufl.yaml", "pretrained.yaml"):
+    for name in (
+        "houston2013.yaml",
+        "trento.yaml",
+        "muufl.yaml",
+        "pretrained.yaml",
+        "online_vit.yaml",
+    ):
         result = subprocess.run(
             [
                 sys.executable,
@@ -74,6 +86,23 @@ def test_deterministic_text_embeddings_are_normalized_and_repeatable() -> None:
 
     torch.testing.assert_close(first, second)
     torch.testing.assert_close(first.norm(dim=-1), torch.ones(2))
+
+
+def test_online_vit_rejects_lidar_adapter_in_hsi_role() -> None:
+    config = EncoderConfig(
+        kind="online_vit",
+        model_name="vit_small_patch16",
+        feature_blocks=(2, 5, 8, 11),
+        spectral_adapter=False,
+    )
+
+    with pytest.raises(ConfigError, match=r"HSI.*spectral_adapter=true"):
+        _build_visual_encoder(
+            config,
+            in_channels=6,
+            feature_dim=384,
+            expected_spectral_adapter=True,
+        )
 
 
 class _FakeRemoteClipVisual(nn.Module):

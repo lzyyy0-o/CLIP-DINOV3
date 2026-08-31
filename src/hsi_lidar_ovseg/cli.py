@@ -120,11 +120,19 @@ def _build_visual_encoder(
     in_channels: int,
     feature_dim: int,
     force_frozen: bool = False,
+    expected_spectral_adapter: bool | None = None,
 ) -> nn.Module:
     if config.kind == "native":
         return NativePyramidEncoder(in_channels)
     if config.kind == "online_vit":
         assert config.spectral_adapter is not None
+        if (
+            expected_spectral_adapter is not None
+            and config.spectral_adapter != expected_spectral_adapter
+        ):
+            role = "HSI" if expected_spectral_adapter else "LiDAR"
+            required = "true" if expected_spectral_adapter else "false"
+            raise ConfigError(f"{role} 在线 ViT 必须设置 spectral_adapter={required}")
         return OnlineViTPyramidEncoder(in_channels, spectral_adapter=config.spectral_adapter)
     if config.kind == "remoteclip":
         raise ConfigError("RemoteCLIP 视觉塔必须通过共享模型构建流程创建")
@@ -250,11 +258,13 @@ def _build_model_and_text(
         config.model.hsi_encoder,
         in_channels=hsi_bands,
         feature_dim=config.model.feature_dim,
+        expected_spectral_adapter=True,
     )
     lidar_encoder = _build_visual_encoder(
         config.model.lidar_encoder,
         in_channels=3,
         feature_dim=config.model.feature_dim,
+        expected_spectral_adapter=False,
     )
     structure_teacher_encoder = _build_visual_encoder(
         config.model.structure_teacher_encoder,
