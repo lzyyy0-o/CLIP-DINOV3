@@ -1,5 +1,9 @@
 """Model components for multimodal open-vocabulary segmentation."""
 
+from hsi_lidar_ovseg.models.clip_guided_model import (
+    ClipGuidedSegmentationOutput,
+    CLIPGuidedSharedLiteViTSegmentor,
+)
 from hsi_lidar_ovseg.models.clip_text import ClipTextEncoder
 from hsi_lidar_ovseg.models.dinov2 import DinoV2Adapter
 from hsi_lidar_ovseg.models.dinov3 import DinoV3ConvNeXtAdapter, DinoV3ViTAdapter
@@ -18,7 +22,9 @@ from hsi_lidar_ovseg.models.remoteclip import RemoteClipVisionAdapter
 from hsi_lidar_ovseg.models.shared_lite_vit import SharedLiteViT, SharedTokenOutput
 
 __all__ = [
+    "CLIPGuidedSharedLiteViTSegmentor",
     "ChannelAdapter",
+    "ClipGuidedSegmentationOutput",
     "ClipTextEncoder",
     "DinoV2Adapter",
     "DinoV3ConvNeXtAdapter",
