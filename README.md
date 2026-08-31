@@ -33,6 +33,20 @@ pip install -e ".[dev,pretrained]"
 pip install git+https://github.com/openai/CLIP.git
 ```
 
+### Linux 服务器安装
+
+先按服务器 CUDA 版本安装匹配的 PyTorch wheel；下例适用于 CUDA 12.8。随后使用仓库根目录的 `requirements.txt` 安装其余训练依赖：
+
+```bash
+conda create -n hsi-lidar python=3.11 -y
+conda activate hsi-lidar
+python -m pip install --upgrade pip
+python -m pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
+python -m pip install -r requirements.txt
+```
+
+如果服务器 CUDA 不是 12.8，请把最后一个 PyTorch index URL 改为与驱动和 CUDA 运行时匹配的官方 wheel 索引；其余依赖仍使用同一份 `requirements.txt`。
+
 只运行原生编码器时，可以省略 `pretrained`：
 
 ```powershell
