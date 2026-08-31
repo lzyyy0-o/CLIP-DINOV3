@@ -1,6 +1,12 @@
 # HSI-LiDAR 开放词汇语义分割
 
-这是一个面向配准高光谱影像（HSI）与 LiDAR 栅格的独立 PyTorch 工程。它借鉴 MM-OVSeg 的核心思想：用冻结的视觉/文本语义空间约束任务模态，再通过密集像素嵌入与文本类别原型的相似度完成开放词汇分割。工程支持 Houston 2013、Trento 和 MUUFL Gulfport，并且不会自动下载数据或模型。
+这是一个面向配准高光谱影像（HSI）与 LiDAR 栅格的独立 PyTorch 工程。主实验网络借鉴 MM-OVSeg 的文本条件相关性思想：用可微调的 OpenAI CLIP 图文空间引导 HSI-LiDAR 联合特征，再通过类别共享解码器完成开放词汇分割。工程支持 Houston 2013、Houston 2018、Trento 和 MUUFL Gulfport，并且不会自动下载数据或模型。
+
+### CLIP 引导主配置
+
+[`configs/shared_lite_vit_clip.yaml`](configs/shared_lite_vit_clip.yaml) 是当前主配置：HSI 先经 `1×1` 光谱适配器、LiDAR 直接进行 patch embedding；两路 token 共享 6 个 Lite-ViT block（阶段深度 `[1,1,2,2]`），随后经过双向跨注意力 MMFB 与互补融合 CMFEB。伪 RGB 进入本地 OpenAI CLIP ViT-B/16；其文本塔以四条模板在线生成 `[类别数, 模板数, 512]` 原型，联合特征和 CLIP 视觉特征分别与原型计算相关图，再由类别共享 FPN 输出动态类别数的分割 logits。
+
+该模式不构建 DINO、RemoteCLIP、结构教师或语义教师，也不使用蒸馏、InfoNCE、门控或私有特征损失。训练仅在已见类别的训练掩码像素上计算多类别交叉熵；每个训练 step 会重算可反向传播的文本特征，整图推理则按“类别列表 + 模板列表”缓存文本原型。
 
 ## 模型结构
 
@@ -24,6 +30,7 @@ conda create -n hsi-lidar python=3.11 -y
 conda activate hsi-lidar
 pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
 pip install -e ".[dev,pretrained]"
+pip install git+https://github.com/openai/CLIP.git
 ```
 
 只运行原生编码器时，可以省略 `pretrained`：
@@ -54,14 +61,18 @@ data/
 │   └── test_mask.mat
 ├── trento/
 │   └── ...
-└── muufl/
+├── muufl/
+│   └── ...
+└── houston2018/
     └── ...
 weights/
 ├── hypersigma.pt
 ├── dinov2.pt
 ├── dinov3-convnext-tiny.pt
 ├── dinov3-vit.pt
-└── remoteclip.pt
+├── remoteclip.pt
+└── openai_clip/
+    └── ViT-B-16.pt
 ```
 
 输入支持 `.mat`、`.npy` 和 `.npz`。统一数组契约为：
@@ -104,6 +115,21 @@ hsi-lidar-ovseg validate-config configs/houston2013.yaml
 ```
 
 三套配置中的已见/未见类划分是项目默认的确定性研究划分，不是社区标准划分。论文实验必须明确报告所用划分；改变划分只需同时修改 `seen_class_ids` 与 `unseen_class_ids`，二者必须互斥并覆盖所有类别。
+
+### 开放词汇主实验
+
+Houston 2018 是当前主开发集，使用 [`configs/shared_lite_vit_clip.yaml`](configs/shared_lite_vit_clip.yaml) 的 14 个已见类与 6 个未见类划分。先将本地 OpenAI CLIP ViT-B/16 权重放到 `weights/openai_clip/ViT-B-16.pt`，并按实际 MATLAB 文件修改数据路径和键名：
+
+```powershell
+hsi-lidar-ovseg validate-config configs/shared_lite_vit_clip.yaml --skip-file-checks
+hsi-lidar-ovseg validate-config configs/shared_lite_vit_clip.yaml
+hsi-lidar-ovseg train configs/shared_lite_vit_clip.yaml
+hsi-lidar-ovseg evaluate configs/shared_lite_vit_clip.yaml outputs/houston2018_clip_guided_shared_lite_vit/best.pt
+```
+
+CLIP 引导配置固定使用 `224×224` 图块、OpenAI CLIP `ViT-B/16`、视觉/文本塔末两个 block 的部分微调。训练期未见类像素完全不进入 CE；评估时全部类别都参与文本匹配。请从有授权的数据源获取 Houston 2018，并遵守相应数据许可。
+
+作为独立基准，Houston 2013 使用 10/5、MUUFL 使用 7/4、Trento 使用 4/2 的已见/未见划分。每个数据集应独立训练并在其官方测试掩码上评估；跨数据集训练/测试应单独报告为域泛化协议，而不是验证集替代。
 
 ### 原生离线基线
 
@@ -203,19 +229,19 @@ loss:
 开始训练：
 
 ```powershell
-hsi-lidar-ovseg train configs/houston2013.yaml
+hsi-lidar-ovseg train configs/shared_lite_vit_clip.yaml
 ```
 
 从兼容检查点恢复：
 
 ```powershell
-hsi-lidar-ovseg train configs/houston2013.yaml --resume outputs/houston2013/last.pt
+hsi-lidar-ovseg train configs/shared_lite_vit_clip.yaml --resume outputs/houston2018_clip_guided_shared_lite_vit/last.pt
 ```
 
 整图滑窗评估：
 
 ```powershell
-hsi-lidar-ovseg evaluate configs/houston2013.yaml outputs/houston2013/best.pt
+hsi-lidar-ovseg evaluate configs/shared_lite_vit_clip.yaml outputs/houston2018_clip_guided_shared_lite_vit/best.pt
 ```
 
 每轮训练完成后，程序在原始训练掩码中按已见类别确定性分层抽取 10% 标注像素构成验证集；剩余 90% 训练像素用于归一化、类别感知采样和参数更新。`best.pt` 仅按验证集 `seen_miou` 选择，余弦学习率在每个优化步更新到 `cosine_eta_min`，连续 `early_stopping_patience` 轮未超过 `early_stopping_min_delta` 时提前停止。训练结束后恢复 `best.pt`，仅在测试掩码上整图评估一次。
@@ -228,7 +254,7 @@ hsi-lidar-ovseg evaluate configs/houston2013.yaml outputs/houston2013/best.pt
 - `predictions.npy`：评估命令生成的一基类别预测图；
 - `metrics.json`：mIoU、类别准确率、总体准确率、已见/未见 mIoU、调和 mIoU 和逐类指标。
 
-检查点恢复会校验类别名称及顺序、已见/未见编号、HSI 波段数、LiDAR 模型输入通道数、融合维度和文本维度。任一字段不一致都会拒绝加载。
+检查点恢复会校验架构类型、CLIP 模型名、类别名称及顺序、已见/未见编号、HSI 波段数、LiDAR 模型输入通道数、融合维度和文本维度。任一字段不一致都会拒绝加载。
 
 ## 测试与代码规范
 

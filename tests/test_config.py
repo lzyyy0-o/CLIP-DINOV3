@@ -126,7 +126,14 @@ def _clip_guided_config_dict(
     if include_teacher:
         model["hsi_encoder"] = {"kind": "native"}
     values["model"] = model
-    values["loss"] = {"kind": "masked_cross_entropy"}
+    values["loss"] = {
+        "kind": "masked_cross_entropy",
+        "structure_teacher_weight": 0.0,
+        "semantic_teacher_weight": 0.0,
+        "cross_weight": 0.0,
+        "gate_weight": 0.0,
+        "private_weight": 0.0,
+    }
     train = values["train"]
     assert isinstance(train, dict)
     train["tile_size"] = tile_size
@@ -197,6 +204,41 @@ def test_clip_guided_config_rejects_incompatible_fields(
 
     with pytest.raises(ConfigError, match=message):
         load_config(path, check_files=False)
+
+
+def test_masked_cross_entropy_rejects_teacher_loss_weights(tmp_path: Path) -> None:
+    values = _clip_guided_config_dict()
+    loss = values["loss"]
+    assert isinstance(loss, dict)
+    loss["cross_weight"] = 0.5
+    path = tmp_path / "bad-loss.yaml"
+    path.write_text(yaml.safe_dump(values), encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="masked_cross_entropy"):
+        load_config(path, check_files=False)
+
+
+@pytest.mark.parametrize(
+    ("name", "seen_count", "unseen_count"),
+    [
+        ("houston2013.yaml", 10, 5),
+        ("muufl.yaml", 7, 4),
+        ("trento.yaml", 4, 2),
+        ("shared_lite_vit_clip.yaml", 14, 6),
+    ],
+)
+def test_published_open_vocabulary_configs_cover_each_class_once(
+    name: str, seen_count: int, unseen_count: int
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    config = load_config(root / "configs" / name, check_files=False)
+
+    assert len(config.data.seen_class_ids) == seen_count
+    assert len(config.data.unseen_class_ids) == unseen_count
+    assert set(config.data.seen_class_ids).isdisjoint(config.data.unseen_class_ids)
+    assert set(config.data.seen_class_ids) | set(config.data.unseen_class_ids) == set(
+        range(1, config.data.num_classes + 1)
+    )
 
 
 @pytest.mark.parametrize(

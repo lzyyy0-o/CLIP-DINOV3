@@ -365,6 +365,13 @@ class LossConfig:
         invalid = [name for name, value in weights.items() if value < 0]
         if invalid:
             raise ConfigError(f"损失权重不得为负数: {', '.join(invalid)}")
+        if self.kind == "masked_cross_entropy":
+            nonzero = [name for name, value in weights.items() if value != 0]
+            if nonzero:
+                raise ConfigError(
+                    "loss.kind=masked_cross_entropy 时教师与正则损失权重必须为 0: "
+                    + ", ".join(nonzero)
+                )
         if self.temperature <= 0:
             raise ConfigError("temperature 必须为正数")
 

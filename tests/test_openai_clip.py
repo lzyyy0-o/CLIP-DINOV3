@@ -40,11 +40,13 @@ class _FakeOpenAIClip(nn.Module):
         self.ln_final = nn.LayerNorm(512)
         self.text_projection = nn.Parameter(torch.eye(512))
         self.text_seed = nn.Parameter(torch.ones(1, 512))
+        self.text_encode_calls = 0
 
     def encode_image(self, image: torch.Tensor) -> torch.Tensor:
         return self.visual(image)
 
     def encode_text(self, tokens: torch.Tensor) -> torch.Tensor:
+        self.text_encode_calls += 1
         features = self.text_seed.expand(tokens.shape[0], -1)
         for block in self.transformer.resblocks:
             features = block(features[:, None])[:, 0]
@@ -78,3 +80,23 @@ def test_openai_clip_guidance_preserves_prompt_axis_and_partial_gradients() -> N
     assert clip.visual.transformer.resblocks[9].weight.grad is None
     assert clip.visual.transformer.resblocks[10].weight.grad is not None
     assert clip.transformer.resblocks[10].weight.grad is not None
+
+
+def test_openai_clip_guidance_caches_text_features_only_during_evaluation() -> None:
+    clip = _FakeOpenAIClip()
+    guidance = OpenAIClipGuidance(
+        clip,
+        _tokenize,
+        (2, 5, 8, 11),
+        ("aerial image of {}",),
+    ).eval()
+
+    guidance.cache_text_features(("trees", "road"))
+    cached = guidance.text_features(("trees", "road"))
+    guidance.text_features(("trees", "road"))
+    guidance.clear_text_cache()
+    recomputed = guidance.text_features(("trees", "road"))
+
+    assert clip.text_encode_calls == 2
+    assert not cached.requires_grad
+    torch.testing.assert_close(cached, recomputed)

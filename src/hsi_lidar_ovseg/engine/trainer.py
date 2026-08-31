@@ -9,7 +9,7 @@ from torch import Tensor, nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
-from hsi_lidar_ovseg.losses import LossError, OpenVocabularyObjective
+from hsi_lidar_ovseg.losses import LossError
 
 
 class Trainer:
@@ -18,9 +18,9 @@ class Trainer:
     def __init__(
         self,
         model: nn.Module,
-        objective: OpenVocabularyObjective,
+        objective: nn.Module,
         optimizer: Optimizer,
-        text_embeddings: Tensor,
+        text_embeddings: Tensor | tuple[str, ...],
         *,
         device: torch.device,
         gradient_clip: float,
@@ -29,12 +29,16 @@ class Trainer:
     ) -> None:
         if gradient_clip <= 0:
             raise ValueError("gradient_clip 必须为正数")
-        if text_embeddings.ndim != 2:
+        if isinstance(text_embeddings, Tensor) and text_embeddings.ndim != 2:
             raise ValueError("text_embeddings 必须为二维张量")
         self.model = model.to(device)
         self.objective = objective.to(device)
         self.optimizer = optimizer
-        self.text_embeddings = text_embeddings.detach().to(device)
+        self.text_embeddings = (
+            text_embeddings.detach().to(device)
+            if isinstance(text_embeddings, Tensor)
+            else text_embeddings
+        )
         self.device = device
         self.gradient_clip = gradient_clip
         self.scheduler = scheduler

@@ -5,6 +5,7 @@ from hsi_lidar_ovseg.models.clip_guided_model import (
     CLIPGuidedSharedLiteViTSegmentor,
 )
 from hsi_lidar_ovseg.models.clip_text import ClipTextEncoder
+from hsi_lidar_ovseg.models.correlation_decoder import TextCorrelationDecoder
 from hsi_lidar_ovseg.models.dinov2 import DinoV2Adapter
 from hsi_lidar_ovseg.models.dinov3 import DinoV3ConvNeXtAdapter, DinoV3ViTAdapter
 from hsi_lidar_ovseg.models.hypersigma import HyperSigmaAdapter
@@ -20,6 +21,7 @@ from hsi_lidar_ovseg.models.openai_clip import OpenAIClipGuidance, load_openai_c
 from hsi_lidar_ovseg.models.protocols import FeaturePyramid, PyramidEncoder, TextEncoder
 from hsi_lidar_ovseg.models.remoteclip import RemoteClipVisionAdapter
 from hsi_lidar_ovseg.models.shared_lite_vit import SharedLiteViT, SharedTokenOutput
+from hsi_lidar_ovseg.models.vit_fusion import TokenPyramidProjector, ViTCMFEB, ViTMMFB
 
 __all__ = [
     "CLIPGuidedSharedLiteViTSegmentor",
@@ -40,7 +42,11 @@ __all__ = [
     "SegmentationOutput",
     "SharedLiteViT",
     "SharedTokenOutput",
+    "TextCorrelationDecoder",
     "TextEncoder",
+    "TokenPyramidProjector",
+    "ViTCMFEB",
+    "ViTMMFB",
     "load_openai_clip",
     "make_native_model",
 ]

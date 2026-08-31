@@ -24,6 +24,8 @@ def _identity(**overrides: object) -> CheckpointIdentity:
         "lidar_channels": 3,
         "feature_dim": 16,
         "text_dim": 12,
+        "architecture": "teacher_student",
+        "clip_model_name": None,
     }
     values.update(overrides)
     return CheckpointIdentity(**values)  # type: ignore[arg-type]
@@ -55,6 +57,24 @@ def test_checkpoint_rejects_class_identity_mismatch(tmp_path: Path) -> None:
             model,
             optimizer,
             _identity(class_names=("road", "tree")),
+        )
+
+
+def test_checkpoint_rejects_architecture_or_clip_mismatch(tmp_path: Path) -> None:
+    model = nn.Linear(3, 2)
+    optimizer = torch.optim.AdamW(model.parameters())
+    path = tmp_path / "model.pt"
+    save_checkpoint(
+        path,
+        _state(model, optimizer),
+    )
+
+    with pytest.raises(CheckpointError, match="architecture"):
+        load_checkpoint(
+            path,
+            model,
+            optimizer,
+            _identity(architecture="clip_guided_shared_lite_vit", clip_model_name="ViT-B/16"),
         )
 
 

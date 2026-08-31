@@ -29,6 +29,8 @@ class CheckpointIdentity:
     lidar_channels: int
     feature_dim: int
     text_dim: int
+    architecture: str = "teacher_student"
+    clip_model_name: str | None = None
 
 
 @dataclass

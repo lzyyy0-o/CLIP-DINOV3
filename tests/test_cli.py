@@ -17,6 +17,7 @@ from hsi_lidar_ovseg import cli
 from hsi_lidar_ovseg.cli import (
     _build_model_and_text,
     _build_visual_encoder,
+    _optimizer,
     deterministic_text_embeddings,
 )
 from hsi_lidar_ovseg.config import (
@@ -26,8 +27,11 @@ from hsi_lidar_ovseg.config import (
     ExperimentConfig,
     LossConfig,
     ModelConfig,
+    OpenAIClipConfig,
+    SharedLiteViTConfig,
     TrainConfig,
 )
+from hsi_lidar_ovseg.models import CLIPGuidedSharedLiteViTSegmentor
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -60,6 +64,7 @@ def test_cli_validates_all_example_configs_without_local_files() -> None:
         "muufl.yaml",
         "pretrained.yaml",
         "online_vit.yaml",
+        "shared_lite_vit_clip.yaml",
     ):
         result = subprocess.run(
             [
@@ -192,6 +197,135 @@ def test_remoteclip_model_is_loaded_once_for_text_and_visual_towers(
     assert calls == [("ViT-B-32", None)]
     assert model.semantic_teacher_encoder.backbone is remoteclip.visual
     assert embeddings.shape == (2, 3)
+
+
+def test_clip_guided_builder_returns_dynamic_class_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = DataConfig(
+        name="demo",
+        hsi_path=Path("hsi.npy"),
+        lidar_path=Path("lidar.npy"),
+        labels_path=Path("labels.npy"),
+        train_mask_path=Path("train.npy"),
+        test_mask_path=Path("test.npy"),
+        hsi_key=None,
+        lidar_key=None,
+        labels_key=None,
+        train_mask_key=None,
+        test_mask_key=None,
+        class_names=("tree", "road"),
+        seen_class_ids=(1,),
+        unseen_class_ids=(2,),
+        pseudo_rgb_indices=(0, 1, 2),
+    )
+    checkpoint = tmp_path / "ViT-B-16.pt"
+    config = ExperimentConfig(
+        name="clip-guided",
+        seed=7,
+        output_dir=tmp_path / "outputs",
+        data=data,
+        model=ModelConfig(
+            architecture="clip_guided_shared_lite_vit",
+            shared_lite_vit=SharedLiteViTConfig(),
+            clip=OpenAIClipConfig(checkpoint=checkpoint),
+            prompt_templates=("aerial image of {}",),
+            feature_dim=512,
+            text_dim=512,
+        ),
+        loss=LossConfig(
+            kind="masked_cross_entropy",
+            structure_teacher_weight=0.0,
+            semantic_teacher_weight=0.0,
+            cross_weight=0.0,
+            gate_weight=0.0,
+            private_weight=0.0,
+        ),
+        train=TrainConfig(device="cpu"),
+    )
+    calls: list[tuple[object, ...]] = []
+
+    def fake_guidance(*args: object) -> nn.Module:
+        calls.append(args)
+        return nn.Identity()
+
+    def fake_clip_loader(_path: Path) -> tuple[nn.Module, object]:
+        return nn.Linear(1, 1), lambda _: torch.ones(1)
+
+    monkeypatch.setattr(cli, "load_openai_clip", fake_clip_loader)
+    monkeypatch.setattr(cli, "OpenAIClipGuidance", fake_guidance)
+
+    model, class_names = _build_model_and_text(config, hsi_bands=6)
+
+    assert isinstance(model, CLIPGuidedSharedLiteViTSegmentor)
+    assert class_names == data.class_names
+    assert calls[0][2] == (2, 5, 8, 11)
+
+
+class _OptimizerClipGuidance(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.model = nn.Linear(2, 2)
+        self.projection = nn.Linear(2, 2)
+
+
+class _OptimizerModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.clip_guidance = _OptimizerClipGuidance()
+        self.decoder = nn.Linear(2, 2)
+
+
+def _optimizer_data_config() -> DataConfig:
+    return DataConfig(
+        name="optimizer",
+        hsi_path=Path("hsi.npy"),
+        lidar_path=Path("lidar.npy"),
+        labels_path=Path("labels.npy"),
+        train_mask_path=Path("train.npy"),
+        test_mask_path=Path("test.npy"),
+        hsi_key=None,
+        lidar_key=None,
+        labels_key=None,
+        train_mask_key=None,
+        test_mask_key=None,
+        class_names=("tree", "road"),
+        seen_class_ids=(1,),
+        unseen_class_ids=(2,),
+        pseudo_rgb_indices=(0, 1, 2),
+    )
+
+
+def test_clip_guided_optimizer_uses_lower_learning_rate_for_clip(
+    tmp_path: Path,
+) -> None:
+    config = ModelConfig(
+        architecture="clip_guided_shared_lite_vit",
+        shared_lite_vit=SharedLiteViTConfig(),
+        clip=OpenAIClipConfig(checkpoint=tmp_path / "ViT-B-16.pt"),
+        feature_dim=512,
+        text_dim=512,
+    )
+    experiment = ExperimentConfig(
+        name="optimizer",
+        seed=1,
+        output_dir=tmp_path / "outputs",
+        data=_optimizer_data_config(),
+        model=config,
+        loss=LossConfig(
+            kind="masked_cross_entropy",
+            structure_teacher_weight=0.0,
+            semantic_teacher_weight=0.0,
+            cross_weight=0.0,
+            gate_weight=0.0,
+            private_weight=0.0,
+        ),
+        train=TrainConfig(device="cpu", learning_rate=1e-4, backbone_learning_rate=1e-5),
+    )
+
+    optimizer = _optimizer(_OptimizerModel(), experiment)
+
+    assert {group["lr"] for group in optimizer.param_groups} == {1e-4, 1e-5}
 
 
 def test_cli_selects_on_validation_and_writes_final_test_metrics(tmp_path: Path) -> None:

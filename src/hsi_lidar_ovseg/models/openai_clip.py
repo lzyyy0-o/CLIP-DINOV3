@@ -6,6 +6,7 @@ import math
 from collections.abc import Sequence
 from pathlib import Path
 
+import torch
 import torch.nn.functional as functional
 from torch import Tensor, nn
 
@@ -69,6 +70,8 @@ class OpenAIClipGuidance(nn.Module):
         self.feature_blocks = feature_blocks
         self.projections = nn.ModuleList(nn.Conv2d(width, self.text_dim, 1) for _ in range(4))
         self._captured: list[Tensor] = []
+        self._cached_class_names: tuple[str, ...] | None = None
+        self._cached_text_features: Tensor | None = None
         self._hooks = [
             visual_blocks[index].register_forward_hook(self._capture) for index in feature_blocks
         ]
@@ -141,10 +144,34 @@ class OpenAIClipGuidance(nn.Module):
             )
         return tuple(outputs)  # type: ignore[return-value]
 
+    def cache_text_features(self, class_names: Sequence[str]) -> None:
+        """Encode evaluation vocabulary once for all sliding-window tiles."""
+
+        if self.training:
+            raise RuntimeError("训练模式不得缓存文本特征")
+        names = tuple(class_names)
+        self.clear_text_cache()
+        with torch.inference_mode():
+            self._cached_text_features = self.text_features(names).detach()
+        self._cached_class_names = names
+
+    def clear_text_cache(self) -> None:
+        """Remove non-persistent evaluation text features."""
+
+        self._cached_class_names = None
+        self._cached_text_features = None
+
     def text_features(self, class_names: Sequence[str]) -> Tensor:
         if not class_names or any(not name.strip() for name in class_names):
             raise ValueError("class_names 必须包含非空类别名称")
-        texts = [template.format(name) for template in self.templates for name in class_names]
+        names = tuple(class_names)
+        if (
+            not self.training
+            and names == self._cached_class_names
+            and self._cached_text_features is not None
+        ):
+            return self._cached_text_features
+        texts = [template.format(name) for template in self.templates for name in names]
         tokens = self.tokenizer(texts)
         if not isinstance(tokens, Tensor):
             raise TypeError("OpenAI CLIP tokenizer 必须返回 Tensor")
@@ -155,6 +182,6 @@ class OpenAIClipGuidance(nn.Module):
         if encoded.ndim != 2 or encoded.shape != (len(texts), self.text_dim):
             raise ValueError("OpenAI CLIP 文本特征必须具有 [提示词数x类别数,512] 形状")
         return functional.normalize(
-            encoded.reshape(len(self.templates), len(class_names), self.text_dim).permute(1, 0, 2),
+            encoded.reshape(len(self.templates), len(names), self.text_dim).permute(1, 0, 2),
             dim=-1,
         )

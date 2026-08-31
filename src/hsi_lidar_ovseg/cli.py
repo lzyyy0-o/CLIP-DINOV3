@@ -46,9 +46,10 @@ from hsi_lidar_ovseg.engine import (
     save_checkpoint,
     sliding_window_predict,
 )
-from hsi_lidar_ovseg.losses import LossError, OpenVocabularyObjective
+from hsi_lidar_ovseg.losses import LossError, MaskedCrossEntropyObjective, OpenVocabularyObjective
 from hsi_lidar_ovseg.metrics import SegmentationMetrics
 from hsi_lidar_ovseg.models import (
+    CLIPGuidedSharedLiteViTSegmentor,
     ClipTextEncoder,
     DinoV2Adapter,
     DinoV3ConvNeXtAdapter,
@@ -57,7 +58,14 @@ from hsi_lidar_ovseg.models import (
     HyperSigmaAdapter,
     NativePyramidEncoder,
     OnlineViTPyramidEncoder,
+    OpenAIClipGuidance,
     RemoteClipVisionAdapter,
+    SharedLiteViT,
+    TextCorrelationDecoder,
+    TokenPyramidProjector,
+    ViTCMFEB,
+    ViTMMFB,
+    load_openai_clip,
 )
 from hsi_lidar_ovseg.models.dinov3_bridge import DinoV3InputBridge
 from hsi_lidar_ovseg.models.hypersigma_bridge import HyperSigmaBridge, load_hypersigma_weights
@@ -251,9 +259,32 @@ def _build_text_embeddings(config: ExperimentConfig) -> torch.Tensor:
 
 def _build_model_and_text(
     config: ExperimentConfig, hsi_bands: int
-) -> tuple[HSILidarOVSegmentor, torch.Tensor]:
+) -> tuple[nn.Module, torch.Tensor | tuple[str, ...]]:
     """Build all visual towers and text prototypes without duplicating RemoteCLIP."""
 
+    if config.model.architecture == "clip_guided_shared_lite_vit":
+        assert config.model.clip is not None
+        clip_model, tokenizer = load_openai_clip(config.model.clip.checkpoint)
+        return (
+            CLIPGuidedSharedLiteViTSegmentor(
+                SharedLiteViT(hsi_bands, 3),
+                ViTMMFB(),
+                ViTCMFEB(),
+                TokenPyramidProjector(),
+                OpenAIClipGuidance(
+                    clip_model,
+                    tokenizer,
+                    config.model.clip.feature_blocks,
+                    config.model.prompt_templates,
+                ),
+                TextCorrelationDecoder(),
+            ),
+            config.data.class_names,
+        )
+    assert config.model.hsi_encoder is not None
+    assert config.model.lidar_encoder is not None
+    assert config.model.structure_teacher_encoder is not None
+    assert config.model.semantic_teacher_encoder is not None
     hsi_encoder = _build_visual_encoder(
         config.model.hsi_encoder,
         in_channels=hsi_bands,
@@ -317,7 +348,9 @@ def _optimizer(model: nn.Module, config: ExperimentConfig) -> torch.optim.AdamW:
     for name, parameter in model.named_parameters():
         if not parameter.requires_grad:
             continue
-        if "encoder" in name or ".backbone." in name:
+        if config.model.architecture == "clip_guided_shared_lite_vit":
+            (backbone if name.startswith("clip_guidance.model.") else heads).append(parameter)
+        elif "encoder" in name or ".backbone." in name:
             backbone.append(parameter)
         else:
             heads.append(parameter)
@@ -355,6 +388,13 @@ def _identity(config: ExperimentConfig, hsi_bands: int) -> CheckpointIdentity:
         lidar_channels=3,
         feature_dim=config.model.feature_dim,
         text_dim=config.model.text_dim,
+        architecture=config.model.architecture,
+        clip_model_name=(
+            config.model.clip.model_name
+            if config.model.architecture == "clip_guided_shared_lite_vit"
+            and config.model.clip is not None
+            else None
+        ),
     )
 
 
@@ -444,7 +484,11 @@ def _train_command(args: argparse.Namespace) -> int:
     stats = fit_normalization(training_scene)
     model, text_embeddings = _build_model_and_text(config, scene.hsi.shape[-1])
     optimizer = _optimizer(model, config)
-    objective = OpenVocabularyObjective(config.loss, config.data.seen_class_ids)
+    objective = (
+        MaskedCrossEntropyObjective(config.data.seen_class_ids)
+        if config.model.architecture == "clip_guided_shared_lite_vit"
+        else OpenVocabularyObjective(config.loss, config.data.seen_class_ids)
+    )
     dataset = PairedTileDataset(
         training_scene,
         stats,

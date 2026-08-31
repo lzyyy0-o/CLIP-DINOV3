@@ -1,6 +1,6 @@
 """Memory-bounded sliding-window scene prediction."""
 
-from __future__ import annotations
+from collections.abc import Sequence
 
 import numpy as np
 import torch
@@ -31,7 +31,7 @@ def _crop_and_pad(array: np.ndarray, top: int, left: int, tile_size: int) -> Ten
 def sliding_window_predict(
     model: nn.Module,
     scene: SceneArrays,
-    text_embeddings: Tensor,
+    text_embeddings: Tensor | Sequence[str],
     tile_size: int,
     overlap: int,
     device: torch.device,
@@ -42,30 +42,43 @@ def sliding_window_predict(
 ) -> Tensor:
     """Predict a complete registered scene and return CPU logits."""
 
-    if text_embeddings.ndim != 2 or text_embeddings.shape[0] <= 0:
-        raise ValueError("text_embeddings 必须是非空二维张量")
+    if isinstance(text_embeddings, Tensor):
+        if text_embeddings.ndim != 2 or text_embeddings.shape[0] <= 0:
+            raise ValueError("text_embeddings 必须是非空二维张量")
+        class_count = text_embeddings.shape[0]
+    else:
+        if not text_embeddings:
+            raise ValueError("类别名称不得为空")
+        class_count = len(text_embeddings)
     if stats is None:
         stats = fit_normalization(scene)
     normalized = normalize_scene(scene, stats)
     hsi = normalized.hsi
     lidar = terrain_channels(normalized.lidar, window_size=terrain_window)
     rgb = pseudo_rgb(scene.hsi, pseudo_rgb_indices, scene.train_mask)
-    accumulator = SlidingWindowAccumulator(
-        text_embeddings.shape[0], *scene.spatial_shape, tile_size
-    )
-    text_embeddings = text_embeddings.to(device)
+    accumulator = SlidingWindowAccumulator(class_count, *scene.spatial_shape, tile_size)
+    if isinstance(text_embeddings, Tensor):
+        conditioning: Tensor | tuple[str, ...] = text_embeddings.to(device)
+    else:
+        conditioning = tuple(text_embeddings)
     was_training = model.training
     model.to(device).eval()
+    cache_text = getattr(getattr(model, "clip_guidance", None), "cache_text_features", None)
+    clear_text_cache = getattr(getattr(model, "clip_guidance", None), "clear_text_cache", None)
     try:
         with torch.inference_mode():
+            if not isinstance(conditioning, Tensor) and callable(cache_text):
+                cache_text(conditioning)
             for top, left in tile_origins(*scene.spatial_shape, tile_size, overlap):
                 output = model(
                     _crop_and_pad(hsi, top, left, tile_size).to(device),
                     _crop_and_pad(lidar, top, left, tile_size).to(device),
                     _crop_and_pad(rgb, top, left, tile_size).to(device),
-                    text_embeddings,
+                    conditioning,
                 )
                 accumulator.add(output.logits[0].float().cpu(), top, left)
     finally:
+        if callable(clear_text_cache):
+            clear_text_cache()
         model.train(was_training)
     return accumulator.finalize()
