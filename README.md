@@ -32,6 +32,8 @@ pip install -e ".[dev,pretrained]"
 pip install -e ".[dev]"
 ```
 
+在线学生实验使用 `configs/online_vit.yaml`：HSI 与 LiDAR 学生均为从零训练的 ViT-S/16；HSI 额外使用可训练 `1×1` 光谱适配器，LiDAR 直接进行单通道 patch embedding。DINOv3 与 RemoteCLIP 仍为冻结教师，因此该模板仍需本地教师权重和 `.[pretrained]` 依赖。以 `224×224`、AMP、batch size 1 起步，预期峰值显存约为 7–10 GiB。
+
 验证 CUDA：
 
 ```powershell

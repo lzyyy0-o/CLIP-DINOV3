@@ -103,6 +103,7 @@ class EncoderConfig:
     spatial_checkpoint: Path | None = None
     spectral_checkpoint: Path | None = None
     pretrained_in_channels: int | None = None
+    spectral_adapter: bool | None = None
     model_name: str | None = None
     feature_blocks: tuple[int, ...] = (2, 5, 8, 11)
     frozen: bool = False
@@ -111,6 +112,7 @@ class EncoderConfig:
     def __post_init__(self) -> None:
         supported = {
             "native",
+            "online_vit",
             "hypersigma",
             "dinov2",
             "dinov3_vit",
@@ -134,6 +136,27 @@ class EncoderConfig:
             raise ConfigError(f"encoder.kind={self.kind} 时必须提供 factory")
         if self.kind == "remoteclip" and self.factory is not None:
             raise ConfigError("encoder.kind=remoteclip 由 OpenCLIP 创建, 不得提供 factory")
+        if self.kind == "online_vit":
+            if self.model_name not in {None, "vit_small_patch16"}:
+                raise ConfigError("online_vit 仅支持 model_name=vit_small_patch16")
+            if self.feature_blocks != (2, 5, 8, 11):
+                raise ConfigError("online_vit 必须使用 feature_blocks=[2, 5, 8, 11]")
+            if self.spectral_adapter is None:
+                raise ConfigError("online_vit 必须明确设置 spectral_adapter")
+            if any(
+                value is not None
+                for value in (
+                    self.checkpoint,
+                    self.factory,
+                    self.source_dir,
+                    self.spatial_checkpoint,
+                    self.spectral_checkpoint,
+                    self.pretrained_in_channels,
+                )
+            ):
+                raise ConfigError("online_vit 不得配置外部源码或权重字段")
+        elif self.spectral_adapter is not None:
+            raise ConfigError("spectral_adapter 仅适用于 online_vit")
         if self.kind == "hypersigma":
             if self.checkpoint is not None:
                 raise ConfigError(

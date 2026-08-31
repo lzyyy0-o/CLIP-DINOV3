@@ -11,6 +11,7 @@ from hsi_lidar_ovseg.models.model import (
     make_native_model,
 )
 from hsi_lidar_ovseg.models.native import NativePyramidEncoder
+from hsi_lidar_ovseg.models.online_vit import OnlineViTPyramidEncoder
 from hsi_lidar_ovseg.models.protocols import FeaturePyramid, PyramidEncoder, TextEncoder
 from hsi_lidar_ovseg.models.remoteclip import RemoteClipVisionAdapter
 
@@ -24,6 +25,7 @@ __all__ = [
     "HSILidarOVSegmentor",
     "HyperSigmaAdapter",
     "NativePyramidEncoder",
+    "OnlineViTPyramidEncoder",
     "PyramidEncoder",
     "RemoteClipVisionAdapter",
     "SegmentationOutput",

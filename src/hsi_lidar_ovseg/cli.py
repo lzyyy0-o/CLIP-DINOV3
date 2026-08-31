@@ -56,6 +56,7 @@ from hsi_lidar_ovseg.models import (
     HSILidarOVSegmentor,
     HyperSigmaAdapter,
     NativePyramidEncoder,
+    OnlineViTPyramidEncoder,
     RemoteClipVisionAdapter,
 )
 from hsi_lidar_ovseg.models.dinov3_bridge import DinoV3InputBridge
@@ -122,6 +123,9 @@ def _build_visual_encoder(
 ) -> nn.Module:
     if config.kind == "native":
         return NativePyramidEncoder(in_channels)
+    if config.kind == "online_vit":
+        assert config.spectral_adapter is not None
+        return OnlineViTPyramidEncoder(in_channels, spectral_adapter=config.spectral_adapter)
     if config.kind == "remoteclip":
         raise ConfigError("RemoteCLIP 视觉塔必须通过共享模型构建流程创建")
     assert config.factory is not None
