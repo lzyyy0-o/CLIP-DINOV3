@@ -225,6 +225,7 @@ def test_masked_cross_entropy_rejects_teacher_loss_weights(tmp_path: Path) -> No
         ("muufl.yaml", 7, 4),
         ("trento.yaml", 4, 2),
         ("shared_lite_vit_clip.yaml", 14, 6),
+        ("houston2013_shared_lite_vit_clip.yaml", 10, 5),
     ],
 )
 def test_published_open_vocabulary_configs_cover_each_class_once(

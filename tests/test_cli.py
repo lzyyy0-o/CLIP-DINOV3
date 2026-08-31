@@ -65,6 +65,7 @@ def test_cli_validates_all_example_configs_without_local_files() -> None:
         "pretrained.yaml",
         "online_vit.yaml",
         "shared_lite_vit_clip.yaml",
+        "houston2013_shared_lite_vit_clip.yaml",
     ):
         result = subprocess.run(
             [
