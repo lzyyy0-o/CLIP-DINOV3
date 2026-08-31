@@ -12,6 +12,7 @@ from hsi_lidar_ovseg.models.model import (
 )
 from hsi_lidar_ovseg.models.native import NativePyramidEncoder
 from hsi_lidar_ovseg.models.online_vit import OnlineViTPyramidEncoder
+from hsi_lidar_ovseg.models.openai_clip import OpenAIClipGuidance, load_openai_clip
 from hsi_lidar_ovseg.models.protocols import FeaturePyramid, PyramidEncoder, TextEncoder
 from hsi_lidar_ovseg.models.remoteclip import RemoteClipVisionAdapter
 from hsi_lidar_ovseg.models.shared_lite_vit import SharedLiteViT, SharedTokenOutput
@@ -27,11 +28,13 @@ __all__ = [
     "HyperSigmaAdapter",
     "NativePyramidEncoder",
     "OnlineViTPyramidEncoder",
+    "OpenAIClipGuidance",
     "PyramidEncoder",
     "RemoteClipVisionAdapter",
     "SegmentationOutput",
     "SharedLiteViT",
     "SharedTokenOutput",
     "TextEncoder",
+    "load_openai_clip",
     "make_native_model",
 ]
