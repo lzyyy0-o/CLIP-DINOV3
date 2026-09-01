@@ -131,17 +131,22 @@ def _as_mask(array: np.ndarray, name: str) -> np.ndarray:
     return mask.astype(np.bool_, copy=False)
 
 
-def load_scene(config: DataConfig) -> SceneArrays:
-    """Load and validate one scene in canonical channel-last layout."""
+def _validate_scene_arrays(
+    config: DataConfig,
+    hsi: np.ndarray,
+    lidar: np.ndarray,
+    labels: np.ndarray,
+    train_mask: np.ndarray,
+    test_mask: np.ndarray,
+) -> SceneArrays:
+    """Validate source-independent arrays and return the canonical scene layout."""
 
-    labels = _as_labels(load_array(config.labels_path, config.labels_key))
+    labels = _as_labels(labels)
     spatial_shape = labels.shape
-    hsi = _as_channel_last(load_array(config.hsi_path, config.hsi_key), spatial_shape, "hsi")
-    lidar = _as_channel_last(
-        load_array(config.lidar_path, config.lidar_key), spatial_shape, "lidar"
-    )
-    train_mask = _as_mask(load_array(config.train_mask_path, config.train_mask_key), "train_mask")
-    test_mask = _as_mask(load_array(config.test_mask_path, config.test_mask_key), "test_mask")
+    hsi = _as_channel_last(hsi, spatial_shape, "hsi")
+    lidar = _as_channel_last(lidar, spatial_shape, "lidar")
+    train_mask = _as_mask(train_mask, "train_mask")
+    test_mask = _as_mask(test_mask, "test_mask")
 
     for name, array in (("hsi", hsi), ("lidar", lidar)):
         if not np.isfinite(array).all():
@@ -167,4 +172,27 @@ def load_scene(config: DataConfig) -> SceneArrays:
         labels=np.ascontiguousarray(labels),
         train_mask=np.ascontiguousarray(train_mask),
         test_mask=np.ascontiguousarray(test_mask),
+    )
+
+
+def load_scene(config: DataConfig, *, split_seed: int = 0) -> SceneArrays:
+    """Load and validate one scene in canonical channel-last layout."""
+
+    if config.source == "rs_fusion_datasets":
+        from hsi_lidar_ovseg.data.rs_fusion import load_rs_fusion_scene
+
+        return load_rs_fusion_scene(config, split_seed=split_seed)
+
+    assert config.hsi_path is not None
+    assert config.lidar_path is not None
+    assert config.labels_path is not None
+    assert config.train_mask_path is not None
+    assert config.test_mask_path is not None
+    return _validate_scene_arrays(
+        config,
+        load_array(config.hsi_path, config.hsi_key),
+        load_array(config.lidar_path, config.lidar_key),
+        load_array(config.labels_path, config.labels_key),
+        load_array(config.train_mask_path, config.train_mask_key),
+        load_array(config.test_mask_path, config.test_mask_key),
     )
