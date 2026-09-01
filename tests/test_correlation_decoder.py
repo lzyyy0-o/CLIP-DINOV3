@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as functional
 
 from hsi_lidar_ovseg.models.correlation_decoder import TextCorrelationDecoder
+from hsi_lidar_ovseg.models.correlation_aggregator import CorrelationAggregatorLayer
 
 
 def _pyramid() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -67,3 +68,15 @@ def test_correlation_decoder_rejects_invalid_text_dimension() -> None:
         TextCorrelationDecoder(512, 32)(
             _pyramid(), _pyramid(), torch.randn(3, 2, 256), (32, 32)
         )
+
+
+def test_correlation_aggregator_preserves_dynamic_cost_volume_shape() -> None:
+    layer = CorrelationAggregatorLayer(hidden_dim=64, text_dim=512, num_heads=4, window_size=7)
+    cost = torch.randn(1, 64, 15, 14, 14, requires_grad=True)
+    text = functional.normalize(torch.randn(15, 2, 512), dim=-1)
+
+    output = layer(cost, text)
+    output.square().mean().backward()
+
+    assert output.shape == cost.shape
+    assert cost.grad is not None
