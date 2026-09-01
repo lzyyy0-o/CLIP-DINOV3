@@ -70,6 +70,30 @@ def test_correlation_decoder_rejects_invalid_text_dimension() -> None:
         )
 
 
+def test_decoder_keeps_fixed_raw_clip_text_correlation_residual() -> None:
+    decoder = TextCorrelationDecoder(512, 8)
+    for parameter in decoder.parameters():
+        parameter.data.zero_()
+    clip = tuple(torch.zeros(1, 512, size, size) for size in (56, 28, 14, 7))
+    joint = tuple(torch.zeros_like(level) for level in clip)
+    clip = tuple(level.clone() for level in clip)
+    for level in clip:
+        level[:, 0] = 1.0
+    text = torch.zeros(2, 1, 512)
+    text[0, 0, 0] = 1.0
+    text[1, 0, 1] = 1.0
+
+    logits = decoder(joint, clip, text, (56, 56))
+
+    assert logits[:, 0].mean() > 0.20
+    assert logits[:, 1].abs().max() < 1e-6
+
+
+def test_correlation_decoder_rejects_non_positive_clip_residual_weight() -> None:
+    with pytest.raises(ValueError, match="clip_residual_weight"):
+        TextCorrelationDecoder(512, 8, clip_residual_weight=0.0)
+
+
 def test_correlation_aggregator_preserves_dynamic_cost_volume_shape() -> None:
     layer = CorrelationAggregatorLayer(hidden_dim=64, text_dim=512, num_heads=4, window_size=7)
     cost = torch.randn(1, 64, 15, 14, 14, requires_grad=True)
