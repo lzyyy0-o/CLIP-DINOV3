@@ -23,11 +23,11 @@ class DataConfig:
     """Paths, array keys, and class protocol for one registered scene."""
 
     name: str
-    hsi_path: Path
-    lidar_path: Path
-    labels_path: Path
-    train_mask_path: Path
-    test_mask_path: Path
+    hsi_path: Path | None
+    lidar_path: Path | None
+    labels_path: Path | None
+    train_mask_path: Path | None
+    test_mask_path: Path | None
     hsi_key: str | None
     lidar_key: str | None
     labels_key: str | None
@@ -37,6 +37,10 @@ class DataConfig:
     seen_class_ids: tuple[int, ...]
     unseen_class_ids: tuple[int, ...]
     pseudo_rgb_indices: tuple[int, int, int]
+    source: Literal["files", "rs_fusion_datasets"] = "files"
+    rs_dataset: Literal["houston2013", "houston2018_ouc", "trento", "muufl"] | None = None
+    rs_data_home: Path | None = None
+    rs_train_samples_per_class: int | float | None = None
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -60,14 +64,77 @@ class DataConfig:
             )
         if len(self.pseudo_rgb_indices) != 3 or any(index < 0 for index in self.pseudo_rgb_indices):
             raise ConfigError("pseudo_rgb_indices 必须包含三个非负索引")
-        for field_name in (
-            "hsi_path",
-            "lidar_path",
-            "labels_path",
-            "train_mask_path",
-            "test_mask_path",
+        file_paths = tuple(
+            getattr(self, field_name)
+            for field_name in (
+                "hsi_path",
+                "lidar_path",
+                "labels_path",
+                "train_mask_path",
+                "test_mask_path",
+            )
+        )
+        file_keys = tuple(
+            getattr(self, field_name)
+            for field_name in (
+                "hsi_key",
+                "lidar_key",
+                "labels_key",
+                "train_mask_key",
+                "test_mask_key",
+            )
+        )
+        if self.source == "files":
+            if any(path is None for path in file_paths):
+                raise ConfigError("source=files 时必须提供五个本地数组路径")
+            if any(
+                value is not None
+                for value in (
+                    self.rs_dataset,
+                    self.rs_data_home,
+                    self.rs_train_samples_per_class,
+                )
+            ):
+                raise ConfigError("source=files 时不得配置 rs-fusion 字段")
+        elif self.source == "rs_fusion_datasets":
+            has_local_paths = any(path is not None for path in file_paths)
+            has_local_keys = any(key is not None for key in file_keys)
+            if has_local_paths or has_local_keys:
+                raise ConfigError("source=rs_fusion_datasets 时不得配置本地数组路径或键名")
+            if self.rs_dataset is None:
+                raise ConfigError("source=rs_fusion_datasets 时必须提供 rs_dataset")
+            if self.rs_data_home is None:
+                raise ConfigError("source=rs_fusion_datasets 时必须提供 rs_data_home")
+            uses_generated_split = self.rs_dataset in {"trento", "muufl"}
+            samples = self.rs_train_samples_per_class
+            if uses_generated_split and samples is None:
+                raise ConfigError("Trento 与 MUUFL 必须提供 rs_train_samples_per_class")
+            if not uses_generated_split and samples is not None:
+                raise ConfigError("Houston 数据集使用官方划分, 不得配置 rs_train_samples_per_class")
+            if samples is not None:
+                is_positive_integer = (
+                    isinstance(samples, int) and not isinstance(samples, bool) and samples > 0
+                )
+                is_fraction = isinstance(samples, float) and 0.0 < samples < 1.0
+                if not (is_positive_integer or is_fraction):
+                    raise ConfigError("rs_train_samples_per_class 必须是正整数或 (0, 1) 浮点比例")
+        else:
+            raise ConfigError(f"不支持的 data.source: {self.source}")
+
+        if self.source != "files":
+            return
+        for field_name, path in zip(
+            (
+                "hsi_path",
+                "lidar_path",
+                "labels_path",
+                "train_mask_path",
+                "test_mask_path",
+            ),
+            file_paths,
+            strict=True,
         ):
-            path = getattr(self, field_name)
+            assert path is not None
             if path.suffix.lower() not in _ARRAY_SUFFIXES:
                 raise ConfigError(f"{field_name} 仅支持 .mat、.npy 或 .npz: {path}")
 
@@ -80,6 +147,11 @@ class DataConfig:
     def validate_files(self) -> None:
         """Require every configured scene file to exist locally."""
 
+        if self.source == "rs_fusion_datasets":
+            assert self.rs_data_home is not None
+            if not self.rs_data_home.is_dir():
+                raise ConfigError(f"rs_data_home 目录不存在: {self.rs_data_home}")
+            return
         for field_name in (
             "hsi_path",
             "lidar_path",
@@ -88,6 +160,7 @@ class DataConfig:
             "test_mask_path",
         ):
             path = getattr(self, field_name)
+            assert path is not None
             if not path.is_file():
                 raise ConfigError(f"{field_name} 文件不存在: {path}")
 
@@ -545,7 +618,10 @@ def _decode_data(raw: object) -> DataConfig:
         "train_mask_path",
         "test_mask_path",
     ):
-        values[field_name] = _path(values.get(field_name), f"data.{field_name}")
+        values[field_name] = _path(values.get(field_name), f"data.{field_name}", optional=True)
+    values["rs_data_home"] = _path(
+        values.get("rs_data_home"), "data.rs_data_home", optional=True
+    )
     values["class_names"] = _tuple(values.get("class_names"), "data.class_names", str)
     values["seen_class_ids"] = _tuple(values.get("seen_class_ids"), "data.seen_class_ids", int)
     values["unseen_class_ids"] = _tuple(

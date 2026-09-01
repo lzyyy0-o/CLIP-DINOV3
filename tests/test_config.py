@@ -94,6 +94,65 @@ def _valid_config_dict() -> dict[str, object]:
     }
 
 
+def _rs_fusion_data_dict(tmp_path: Path, dataset: str = "houston2013") -> dict[str, object]:
+    return {
+        "name": "Houston 2013",
+        "source": "rs_fusion_datasets",
+        "rs_dataset": dataset,
+        "rs_data_home": str(tmp_path / "rs-cache"),
+        "rs_train_samples_per_class": None,
+        "hsi_path": None,
+        "lidar_path": None,
+        "labels_path": None,
+        "train_mask_path": None,
+        "test_mask_path": None,
+        "hsi_key": None,
+        "lidar_key": None,
+        "labels_key": None,
+        "train_mask_key": None,
+        "test_mask_key": None,
+        "class_names": ["tree", "road", "water"],
+        "seen_class_ids": [1, 2],
+        "unseen_class_ids": [3],
+        "pseudo_rgb_indices": [0, 1, 2],
+    }
+
+
+def test_rs_fusion_data_config_accepts_required_fields(tmp_path: Path) -> None:
+    values = _valid_config_dict()
+    values["data"] = _rs_fusion_data_dict(tmp_path)
+    path = tmp_path / "rs-fusion.yaml"
+    path.write_text(yaml.safe_dump(values), encoding="utf-8")
+
+    config = load_config(path, check_files=False)
+
+    assert config.data.source == "rs_fusion_datasets"
+    assert config.data.rs_dataset == "houston2013"
+    assert config.data.rs_data_home == tmp_path / "rs-cache"
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"rs_dataset": None},
+        {"hsi_path": "hsi.mat"},
+        {"rs_train_samples_per_class": 20},
+    ],
+)
+def test_rs_fusion_data_config_rejects_invalid_field_combinations(
+    tmp_path: Path, patch: dict[str, object]
+) -> None:
+    values = _valid_config_dict()
+    data = _rs_fusion_data_dict(tmp_path)
+    data.update(patch)
+    values["data"] = data
+    path = tmp_path / "invalid-rs-fusion.yaml"
+    path.write_text(yaml.safe_dump(values), encoding="utf-8")
+
+    with pytest.raises(ConfigError):
+        load_config(path, check_files=False)
+
+
 def _clip_guided_config_dict(
     *, tile_size: int = 224, include_teacher: bool = False
 ) -> dict[str, object]:
