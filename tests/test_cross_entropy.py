@@ -5,7 +5,10 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from hsi_lidar_ovseg.losses.cross_entropy import MaskedCrossEntropyObjective
+from hsi_lidar_ovseg.losses.cross_entropy import (
+    ClipGuidedAlignmentObjective,
+    MaskedCrossEntropyObjective,
+)
 
 
 def test_masked_cross_entropy_ignores_unseen_labels() -> None:
@@ -44,3 +47,62 @@ def test_masked_cross_entropy_maps_non_contiguous_seen_ids_to_local_logits() -> 
     )
 
     assert losses["total"] < 1e-5
+
+
+def _alignment_output(joint: torch.Tensor, clip: torch.Tensor) -> SimpleNamespace:
+    return SimpleNamespace(
+        logits=torch.randn(1, 2, 4, 4, requires_grad=True),
+        joint_features=(joint, joint, joint, joint),
+        clip_features=(clip, clip, clip, clip),
+    )
+
+
+def test_clip_alignment_detaches_identical_teacher_features() -> None:
+    joint = torch.randn(1, 512, 4, 4, requires_grad=True)
+    teacher = joint.detach().clone().requires_grad_()
+
+    losses = ClipGuidedAlignmentObjective((1, 2), 0.1)(
+        _alignment_output(joint, teacher),
+        torch.tensor([[[1, 2, 1, 2]] * 4]),
+        torch.ones(1, 4, 4, dtype=torch.bool),
+    )
+    losses["total"].backward()
+
+    assert losses["clip_alignment"] < 1e-5
+    assert joint.grad is not None
+    assert teacher.grad is None
+
+
+def test_clip_alignment_uses_only_valid_pixels() -> None:
+    joint = torch.zeros(1, 512, 4, 4, requires_grad=True)
+    teacher = torch.zeros(1, 512, 4, 4, requires_grad=True)
+    with torch.no_grad():
+        joint[:, 0] = 1.0
+        teacher[:, 0] = 1.0
+        teacher[:, 0, 0, 0] = -1.0
+    valid_mask = torch.ones(1, 4, 4, dtype=torch.bool)
+    valid_mask[:, 0, 0] = False
+
+    losses = ClipGuidedAlignmentObjective((1, 2), 0.1)(
+        _alignment_output(joint, teacher),
+        torch.ones(1, 4, 4, dtype=torch.long),
+        valid_mask,
+    )
+
+    assert losses["clip_alignment"] < 1e-5
+
+
+def test_clip_alignment_penalizes_orthogonal_feature_directions() -> None:
+    joint = torch.zeros(1, 512, 4, 4, requires_grad=True)
+    teacher = torch.zeros(1, 512, 4, 4, requires_grad=True)
+    with torch.no_grad():
+        joint[:, 0] = 1.0
+        teacher[:, 1] = 1.0
+
+    losses = ClipGuidedAlignmentObjective((1, 2), 0.1)(
+        _alignment_output(joint, teacher),
+        torch.ones(1, 4, 4, dtype=torch.long),
+        torch.ones(1, 4, 4, dtype=torch.bool),
+    )
+
+    assert losses["clip_alignment"] > 0.9
