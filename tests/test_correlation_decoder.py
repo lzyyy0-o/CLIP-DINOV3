@@ -4,8 +4,8 @@ import pytest
 import torch
 import torch.nn.functional as functional
 
-from hsi_lidar_ovseg.models.correlation_decoder import TextCorrelationDecoder
 from hsi_lidar_ovseg.models.correlation_aggregator import CorrelationAggregatorLayer
+from hsi_lidar_ovseg.models.correlation_decoder import TextCorrelationDecoder
 
 
 def _pyramid() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:

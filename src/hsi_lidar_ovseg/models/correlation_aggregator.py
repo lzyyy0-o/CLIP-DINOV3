@@ -58,9 +58,15 @@ class _WindowAttentionBlock(nn.Module):
             else inputs
         )
         windows = (
-            shifted.reshape(batch, classes, height // window, window, width // window, window, channels)
+            shifted.reshape(
+                batch, classes, height // window, window, width // window, window, channels
+            )
             .permute(0, 1, 2, 4, 3, 5, 6)
-            .reshape(batch * classes * (height // window) * (width // window), window * window, channels)
+            .reshape(
+                batch * classes * (height // window) * (width // window),
+                window * window,
+                channels,
+            )
         )
         mask = self._attention_mask(height, width, inputs)
         if mask is not None:
@@ -68,11 +74,15 @@ class _WindowAttentionBlock(nn.Module):
                 self.attention.num_heads, dim=0
             )
         normalized = self.norm1(windows)
-        attended = self.attention(normalized, normalized, normalized, attn_mask=mask, need_weights=False)[0]
+        attended = self.attention(
+            normalized, normalized, normalized, attn_mask=mask, need_weights=False
+        )[0]
         windows = windows + attended
         windows = windows + self.mlp(self.norm2(windows))
         restored = (
-            windows.reshape(batch, classes, height // window, width // window, window, window, channels)
+            windows.reshape(
+                batch, classes, height // window, width // window, window, window, channels
+            )
             .permute(0, 1, 2, 4, 3, 5, 6)
             .reshape(batch, classes, height, width, channels)
         )
@@ -130,7 +140,7 @@ class TextGuidedClassAggregator(nn.Module):
         if channels != self.hidden_dim:
             raise ValueError(f"成本体通道必须为 {self.hidden_dim}")
         if text.shape[0] != classes or text.shape[1] == 0:
-            raise ValueError("文本类别数与成本体类别数必须一致，且提示词数必须为正")
+            raise ValueError("文本类别数与成本体类别数必须一致, 且提示词数必须为正")
         tokens = cost.permute(0, 3, 4, 2, 1).reshape(batch * height * width, classes, channels)
         guidance = self.text_projection(text.mean(dim=1)).unsqueeze(0).expand(
             tokens.shape[0], -1, -1

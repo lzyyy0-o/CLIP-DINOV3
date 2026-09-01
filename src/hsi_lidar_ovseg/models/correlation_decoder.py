@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as functional
 from torch import Tensor, nn
 
+from hsi_lidar_ovseg.models.correlation_aggregator import CorrelationAggregatorLayer
 from hsi_lidar_ovseg.models.protocols import FeaturePyramid
 
 
@@ -35,7 +36,12 @@ class TextCorrelationDecoder(nn.Module):
         if hidden_dim <= 0:
             raise ValueError("hidden_dim 必须为正整数")
         self.feature_dim = feature_dim
+        self.hidden_dim = hidden_dim
         self.embeddings = nn.ModuleList(_CorrelationEmbedding(hidden_dim) for _ in range(4))
+        self.aggregators = nn.ModuleList(
+            CorrelationAggregatorLayer(hidden_dim, feature_dim, num_heads=4, window_size=7)
+            for _ in range(2)
+        )
         self.refine = nn.ModuleList(
             nn.Sequential(nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1), nn.GELU())
             for _ in range(3)
@@ -75,12 +81,21 @@ class TextCorrelationDecoder(nn.Module):
         for joint, clip, embedding in zip(
             joint_features, clip_features, self.embeddings, strict=True
         ):
+            height, width = joint.shape[-2:]
             correlations = (
                 self._correlation(joint, text_features),
                 self._correlation(clip, text_features),
             )
             pair = torch.stack(correlations, dim=2)
-            levels.append(embedding(pair.reshape(batch * classes, 2, *joint.shape[-2:])))
+            cost = embedding(pair.reshape(batch * classes, 2, height, width))
+            cost = cost.reshape(batch, classes, self.hidden_dim, height, width).permute(
+                0, 2, 1, 3, 4
+            )
+            for aggregator in self.aggregators:
+                cost = aggregator(cost, text_features)
+            levels.append(
+                cost.permute(0, 2, 1, 3, 4).reshape(batch * classes, self.hidden_dim, height, width)
+            )
 
         decoded = levels[-1]
         for lateral, refine in zip(reversed(levels[:-1]), self.refine, strict=True):
