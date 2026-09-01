@@ -66,7 +66,10 @@ class TextRecomputingSegmentor(nn.Module):
         logits = self.scale * torch.ones(
             batch, len(class_names), height, width, device=hsi.device
         )
-        return ClipGuidedSegmentationOutput(logits)
+        features = tuple(
+            torch.ones(batch, 512, size, size, device=hsi.device) for size in (8, 4, 2, 1)
+        )
+        return ClipGuidedSegmentationOutput(logits, features, features)
 
 
 def test_cosine_scheduler_uses_total_training_steps() -> None:

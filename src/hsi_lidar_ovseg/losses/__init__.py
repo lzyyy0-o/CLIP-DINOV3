@@ -8,8 +8,8 @@ from hsi_lidar_ovseg.losses.cross_entropy import (
 from hsi_lidar_ovseg.losses.objective import OpenVocabularyObjective
 
 __all__ = [
-    "LossError",
     "ClipGuidedAlignmentObjective",
+    "LossError",
     "MaskedCrossEntropyObjective",
     "OpenVocabularyObjective",
     "symmetric_info_nce",
