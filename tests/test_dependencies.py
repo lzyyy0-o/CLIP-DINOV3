@@ -15,6 +15,7 @@ def test_server_requirements_include_training_and_openai_clip_dependencies() -> 
         "scipy>=1.11",
         "PyYAML>=6.0",
         "clip @ git+https://github.com/openai/CLIP.git",
+        "rs-fusion-datasets",
         "timm>=1.0",
     ):
         assert dependency in requirements

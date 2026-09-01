@@ -1,0 +1,36 @@
+name: houston2013_clip_guided_shared_lite_vit_rs_fusion
+seed: 13
+output_dir: outputs/houston2013_clip_guided_shared_lite_vit_rs_fusion
+
+data:
+  name: Houston 2013
+  source: rs_fusion_datasets
+  rs_dataset: houston2013
+  rs_data_home: data/rs_fusion
+  rs_train_samples_per_class: null
+  hsi_path: null
+  lidar_path: null
+  labels_path: null
+  train_mask_path: null
+  test_mask_path: null
+  hsi_key: null
+  lidar_key: null
+  labels_key: null
+  train_mask_key: null
+  test_mask_key: null
+  class_names: [healthy grass, stressed grass, synthetic grass, trees, soil, water, residential, commercial, road, highway, railway, parking lot 1, parking lot 2, tennis court, running track]
+  seen_class_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  unseen_class_ids: [11, 12, 13, 14, 15]
+  pseudo_rgb_indices: [60, 30, 10]
+
+model:
+  architecture: clip_guided_shared_lite_vit
+  shared_lite_vit: {patch_size: 16, embed_dim: 384, depths: [1, 1, 2, 2], num_heads: 6, mlp_ratio: 2.0}
+  clip: {checkpoint: weights/openai_clip/ViT-B-16.pt, model_name: ViT-B/16, feature_blocks: [2, 5, 8, 11], unfreeze_blocks: 2}
+  prompt_templates: ["aerial image of {}", "satellite image of {}", "top-down view of {}", "remote sensing image of {}"]
+  feature_dim: 512
+  text_dim: 512
+  terrain_window: 9
+
+loss: {kind: masked_cross_entropy, structure_teacher_weight: 0.0, semantic_teacher_weight: 0.0, cross_weight: 0.0, gate_weight: 0.0, private_weight: 0.0}
+train: {tile_size: 224, overlap: 56, min_seen_pixels: 1, class_aware_sampling: true, class_aware_fraction: 0.7, validation_fraction: 0.1, early_stopping_patience: 20, early_stopping_min_delta: 0.0, cosine_eta_min: 0.000001, batch_size: 1, epochs: 100, learning_rate: 0.0001, backbone_learning_rate: 0.00001, weight_decay: 0.01, gradient_clip: 1.0, amp: true, device: cuda}

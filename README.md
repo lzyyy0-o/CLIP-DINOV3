@@ -109,6 +109,35 @@ MATLAB v7.3 文件可用：
 python -c "import h5py; f=h5py.File('data/houston2013/hsi.mat'); print(list(f.keys()))"
 ```
 
+### rs-fusion-datasets 数据源
+
+除本地 MAT 模式外，工程还支持 `rs-fusion-datasets` 的原始数据缓存。其 HSI/LiDAR 为 CHW 格式、标签为稀疏图时，适配层会在内存中转换为工程统一的 HWC 稠密场景；不会另行生成 MAT 文件。先安装依赖并创建缓存根目录：
+
+```bash
+python -m pip install rs-fusion-datasets
+mkdir -p data/rs_fusion
+```
+
+例如，预下载 Houston 2013：
+
+```bash
+python - <<'PY'
+from pathlib import Path
+from rs_fusion_datasets import fetch_houston2013
+
+fetch_houston2013(data_home=Path("data/rs_fusion").resolve())
+PY
+```
+
+使用 [`configs/houston2013_shared_lite_vit_clip_rs_fusion.yaml`](configs/houston2013_shared_lite_vit_clip_rs_fusion.yaml) 训练：
+
+```bash
+hsi-lidar-ovseg validate-config configs/houston2013_shared_lite_vit_clip_rs_fusion.yaml --skip-file-checks
+hsi-lidar-ovseg train configs/houston2013_shared_lite_vit_clip_rs_fusion.yaml
+```
+
+Houston 2013/2018 保留工具包提供的官方训练/测试掩码；Trento 和 MUUFL 使用 `rs_train_samples_per_class: 20` 与顶层 `seed` 按类确定性抽样，未抽中的正标签像素作为测试区。配置中的 `rs_data_home` 只保存第三方下载缓存，不能填写 `outputs/` 或权重目录。完整配置校验只检查缓存根目录是否存在，不会触发网络下载。
+
 Houston 2013 的官方竞赛页面给出了 15 类的编号顺序；MUUFL 的数据和场景标签来自官方发布仓库。示例配置保留这些类别顺序，但文件路径、数组键和伪 RGB 波段索引仍需按你的数据副本核对：
 
 - [Houston 2013 官方数据说明](https://machinelearning.ee.uh.edu/2013-ieee-grss-data-fusion-contest/)

@@ -479,7 +479,7 @@ def _train_command(args: argparse.Namespace) -> int:
     random.seed(config.seed)
     np.random.seed(config.seed)
     torch.manual_seed(config.seed)
-    scene = load_scene(config.data)
+    scene = load_scene(config.data, split_seed=config.seed)
     training_scene, validation_mask = _training_scene(scene, config)
     stats = fit_normalization(training_scene)
     model, text_embeddings = _build_model_and_text(config, scene.hsi.shape[-1])
@@ -632,7 +632,7 @@ def _train_command(args: argparse.Namespace) -> int:
 def _evaluate_command(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     device = _device(config)
-    scene = load_scene(config.data)
+    scene = load_scene(config.data, split_seed=config.seed)
     training_scene, _ = _training_scene(scene, config)
     model, text_embeddings = _build_model_and_text(config, scene.hsi.shape[-1])
     optimizer = _optimizer(model, config)
