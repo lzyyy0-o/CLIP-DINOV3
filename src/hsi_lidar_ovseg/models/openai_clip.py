@@ -29,10 +29,10 @@ def load_openai_clip(checkpoint: Path) -> tuple[nn.Module, Tokenizer]:
     return model.float(), clip.tokenize
 
 
-def _resblocks(module: object, name: str) -> nn.ModuleList:
+def _resblocks(module: object, name: str) -> nn.ModuleList | nn.Sequential:
     transformer = getattr(module, "transformer", None)
     blocks = getattr(transformer, "resblocks", None)
-    if not isinstance(blocks, nn.ModuleList) or len(blocks) != 12:
+    if not isinstance(blocks, (nn.ModuleList, nn.Sequential)) or len(blocks) != 12:
         raise ValueError(f"{name} 必须公开 12 个 Transformer resblocks")
     return blocks
 

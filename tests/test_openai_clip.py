@@ -57,6 +57,23 @@ def _tokenize(texts: list[str]) -> torch.Tensor:
     return torch.ones(len(texts), 77, dtype=torch.long)
 
 
+def test_openai_clip_guidance_accepts_official_sequential_resblocks() -> None:
+    clip = _FakeOpenAIClip()
+    clip.visual.transformer.resblocks = nn.Sequential(*clip.visual.transformer.resblocks)
+    clip.transformer.resblocks = nn.Sequential(*clip.transformer.resblocks)
+
+    guidance = OpenAIClipGuidance(
+        clip,
+        _tokenize,
+        (2, 5, 8, 11),
+        ("aerial image of {}",),
+    )
+
+    assert isinstance(clip.visual.transformer.resblocks, nn.Sequential)
+    assert isinstance(clip.transformer.resblocks, nn.Sequential)
+    assert guidance.model.visual.transformer.resblocks[10].weight.requires_grad
+
+
 def test_openai_clip_guidance_preserves_prompt_axis_and_partial_gradients() -> None:
     clip = _FakeOpenAIClip()
     guidance = OpenAIClipGuidance(
