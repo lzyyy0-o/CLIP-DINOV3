@@ -417,16 +417,19 @@ class ModelConfig:
 class LossConfig:
     """Weights for supervised, alignment, and regularization terms."""
 
-    kind: Literal["teacher_student", "masked_cross_entropy"] = "teacher_student"
+    kind: Literal["teacher_student", "masked_cross_entropy", "clip_guided_alignment"] = (
+        "teacher_student"
+    )
     structure_teacher_weight: float = 1.0
     semantic_teacher_weight: float = 1.0
     cross_weight: float = 0.5
     gate_weight: float = 0.01
     private_weight: float = 0.01
+    clip_alignment_weight: float = 0.0
     temperature: float = 0.1
 
     def __post_init__(self) -> None:
-        if self.kind not in {"teacher_student", "masked_cross_entropy"}:
+        if self.kind not in {"teacher_student", "masked_cross_entropy", "clip_guided_alignment"}:
             raise ConfigError(f"不支持的 loss.kind: {self.kind}")
         weights = {
             "structure_teacher_weight": self.structure_teacher_weight,
@@ -445,6 +448,21 @@ class LossConfig:
                     "loss.kind=masked_cross_entropy 时教师与正则损失权重必须为 0: "
                     + ", ".join(nonzero)
                 )
+        if self.kind == "clip_guided_alignment":
+            nonzero = [name for name, value in weights.items() if value != 0]
+            if nonzero:
+                raise ConfigError(
+                    "loss.kind=clip_guided_alignment 时教师与正则损失权重必须为 0: "
+                    + ", ".join(nonzero)
+                )
+            if self.clip_alignment_weight <= 0:
+                raise ConfigError(
+                    "loss.kind=clip_guided_alignment 时 clip_alignment_weight 必须为正数"
+                )
+        elif self.clip_alignment_weight != 0:
+            raise ConfigError(
+                "仅 loss.kind=clip_guided_alignment 可以设置 clip_alignment_weight"
+            )
         if self.temperature <= 0:
             raise ConfigError("temperature 必须为正数")
 
@@ -524,11 +542,14 @@ class ExperimentConfig:
             and self.train.tile_size != 224
         ):
             raise ConfigError("CLIP 引导架构必须使用 train.tile_size=224")
-        if (
-            self.model.architecture == "clip_guided_shared_lite_vit"
-            and self.loss.kind != "masked_cross_entropy"
-        ):
-            raise ConfigError("CLIP 引导架构必须使用 loss.kind=masked_cross_entropy")
+        if self.model.architecture == "clip_guided_shared_lite_vit":
+            if self.loss.kind not in {"masked_cross_entropy", "clip_guided_alignment"}:
+                raise ConfigError(
+                    "CLIP 引导架构必须使用 loss.kind=masked_cross_entropy 或 "
+                    "clip_guided_alignment"
+                )
+        elif self.loss.kind != "teacher_student":
+            raise ConfigError("教师学生架构必须使用 loss.kind=teacher_student")
         if check_files:
             self.data.validate_files()
             self.model.validate_files()

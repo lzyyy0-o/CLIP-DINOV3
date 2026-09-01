@@ -32,5 +32,5 @@ model:
   text_dim: 512
   terrain_window: 9
 
-loss: {kind: masked_cross_entropy, structure_teacher_weight: 0.0, semantic_teacher_weight: 0.0, cross_weight: 0.0, gate_weight: 0.0, private_weight: 0.0}
+loss: {kind: clip_guided_alignment, clip_alignment_weight: 0.1, structure_teacher_weight: 0.0, semantic_teacher_weight: 0.0, cross_weight: 0.0, gate_weight: 0.0, private_weight: 0.0}
 train: {tile_size: 224, overlap: 56, min_seen_pixels: 1, class_aware_sampling: true, class_aware_fraction: 0.7, validation_fraction: 0.1, early_stopping_patience: 20, early_stopping_min_delta: 0.0, cosine_eta_min: 0.000001, batch_size: 1, epochs: 100, learning_rate: 0.0001, backbone_learning_rate: 0.00001, weight_decay: 0.01, gradient_clip: 1.0, amp: true, device: cuda}

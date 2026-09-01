@@ -47,7 +47,12 @@ from hsi_lidar_ovseg.engine import (
     save_checkpoint,
     sliding_window_predict,
 )
-from hsi_lidar_ovseg.losses import LossError, MaskedCrossEntropyObjective, OpenVocabularyObjective
+from hsi_lidar_ovseg.losses import (
+    ClipGuidedAlignmentObjective,
+    LossError,
+    MaskedCrossEntropyObjective,
+    OpenVocabularyObjective,
+)
 from hsi_lidar_ovseg.metrics import SegmentationMetrics
 from hsi_lidar_ovseg.models import (
     CLIPGuidedSharedLiteViTSegmentor,
@@ -514,11 +519,16 @@ def _train_command(args: argparse.Namespace) -> int:
         train_vocabulary = test_vocabulary = None
         training_conditioning = test_conditioning = text_embeddings
     optimizer = _optimizer(model, config)
-    objective = (
-        MaskedCrossEntropyObjective(config.data.seen_class_ids)
-        if config.model.architecture == "clip_guided_shared_lite_vit"
-        else OpenVocabularyObjective(config.loss, config.data.seen_class_ids)
-    )
+    if config.model.architecture == "clip_guided_shared_lite_vit":
+        objective = (
+            ClipGuidedAlignmentObjective(
+                config.data.seen_class_ids, config.loss.clip_alignment_weight
+            )
+            if config.loss.kind == "clip_guided_alignment"
+            else MaskedCrossEntropyObjective(config.data.seen_class_ids)
+        )
+    else:
+        objective = OpenVocabularyObjective(config.loss, config.data.seen_class_ids)
     dataset = PairedTileDataset(
         training_scene,
         stats,

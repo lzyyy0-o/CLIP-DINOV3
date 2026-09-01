@@ -277,6 +277,45 @@ def test_masked_cross_entropy_rejects_teacher_loss_weights(tmp_path: Path) -> No
         load_config(path, check_files=False)
 
 
+def test_clip_guided_config_accepts_alignment_loss(tmp_path: Path) -> None:
+    values = _clip_guided_config_dict()
+    loss = values["loss"]
+    assert isinstance(loss, dict)
+    loss.update(kind="clip_guided_alignment", clip_alignment_weight=0.1)
+    path = tmp_path / "alignment.yaml"
+    path.write_text(yaml.safe_dump(values), encoding="utf-8")
+
+    config = load_config(path, check_files=False)
+
+    assert config.loss.kind == "clip_guided_alignment"
+    assert config.loss.clip_alignment_weight == 0.1
+
+
+@pytest.mark.parametrize("weight", [0.0, -0.1])
+def test_clip_guided_alignment_rejects_non_positive_weight(tmp_path: Path, weight: float) -> None:
+    values = _clip_guided_config_dict()
+    loss = values["loss"]
+    assert isinstance(loss, dict)
+    loss.update(kind="clip_guided_alignment", clip_alignment_weight=weight)
+    path = tmp_path / "invalid-alignment.yaml"
+    path.write_text(yaml.safe_dump(values), encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="clip_alignment_weight"):
+        load_config(path, check_files=False)
+
+
+def test_masked_cross_entropy_rejects_clip_alignment_weight(tmp_path: Path) -> None:
+    values = _clip_guided_config_dict()
+    loss = values["loss"]
+    assert isinstance(loss, dict)
+    loss["clip_alignment_weight"] = 0.1
+    path = tmp_path / "baseline-with-alignment.yaml"
+    path.write_text(yaml.safe_dump(values), encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="clip_alignment_weight"):
+        load_config(path, check_files=False)
+
+
 @pytest.mark.parametrize(
     ("name", "seen_count", "unseen_count"),
     [
