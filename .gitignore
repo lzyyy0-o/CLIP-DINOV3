@@ -11,3 +11,4 @@ build/
 /outputs/
 /data/
 /weights/
+/.worktrees/
