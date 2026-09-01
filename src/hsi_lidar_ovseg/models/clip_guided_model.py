@@ -7,12 +7,16 @@ from dataclasses import dataclass
 
 from torch import Tensor, nn
 
+from hsi_lidar_ovseg.models.protocols import FeaturePyramid
+
 
 @dataclass(frozen=True)
 class ClipGuidedSegmentationOutput:
     """Dense dynamic-class logits emitted by the CLIP-guided model."""
 
     logits: Tensor
+    joint_features: FeaturePyramid
+    clip_features: FeaturePyramid
 
 
 class CLIPGuidedSharedLiteViTSegmentor(nn.Module):
@@ -53,4 +57,8 @@ class CLIPGuidedSharedLiteViTSegmentor(nn.Module):
         clip_features = self.clip_guidance.visual_features(pseudo_rgb)
         text_features = self.clip_guidance.text_features(tuple(class_names))
         logits = self.decoder(joint_features, clip_features, text_features, hsi.shape[-2:])
-        return ClipGuidedSegmentationOutput(logits=logits)
+        return ClipGuidedSegmentationOutput(
+            logits=logits,
+            joint_features=joint_features,
+            clip_features=clip_features,
+        )

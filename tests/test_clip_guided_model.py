@@ -66,3 +66,6 @@ def test_clip_guided_model_outputs_logits_for_dynamic_class_names() -> None:
     )
 
     assert output.logits.shape == (1, 2, 32, 32)
+    expected = ((1, 512, 8, 8), (1, 512, 4, 4), (1, 512, 2, 2), (1, 512, 1, 1))
+    assert tuple(level.shape for level in output.joint_features) == expected
+    assert tuple(level.shape for level in output.clip_features) == expected
