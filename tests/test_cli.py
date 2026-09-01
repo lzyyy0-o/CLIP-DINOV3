@@ -17,6 +17,7 @@ from hsi_lidar_ovseg import cli
 from hsi_lidar_ovseg.cli import (
     _build_model_and_text,
     _build_visual_encoder,
+    _clip_vocabularies,
     _optimizer,
     deterministic_text_embeddings,
 )
@@ -249,10 +250,10 @@ def test_clip_guided_builder_returns_dynamic_class_names(
         ),
         train=TrainConfig(device="cpu"),
     )
-    calls: list[tuple[object, ...]] = []
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
-    def fake_guidance(*args: object) -> nn.Module:
-        calls.append(args)
+    def fake_guidance(*args: object, **kwargs: object) -> nn.Module:
+        calls.append((args, kwargs))
         return nn.Identity()
 
     def fake_clip_loader(_path: Path) -> tuple[nn.Module, object]:
@@ -265,7 +266,8 @@ def test_clip_guided_builder_returns_dynamic_class_names(
 
     assert isinstance(model, CLIPGuidedSharedLiteViTSegmentor)
     assert class_names == data.class_names
-    assert calls[0][2] == (2, 5, 8, 11)
+    assert calls[0][0][2] == (2, 5, 8, 11)
+    assert calls[0][1]["unfreeze_blocks"] == 0
 
 
 class _OptimizerClipGuidance(nn.Module):
@@ -300,6 +302,15 @@ def _optimizer_data_config() -> DataConfig:
         unseen_class_ids=(2,),
         pseudo_rgb_indices=(0, 1, 2),
     )
+
+
+def test_clip_vocabularies_use_seen_classes_for_training_and_all_classes_for_test() -> None:
+    train_vocabulary, test_vocabulary = _clip_vocabularies(_optimizer_data_config())
+
+    assert train_vocabulary.class_ids == (1,)
+    assert train_vocabulary.class_names == ("tree",)
+    assert test_vocabulary.class_ids == (1, 2)
+    assert test_vocabulary.class_names == ("tree", "road")
 
 
 def test_clip_guided_optimizer_uses_lower_learning_rate_for_clip(

@@ -49,12 +49,16 @@ class OpenAIClipGuidance(nn.Module):
         tokenizer: Tokenizer,
         feature_blocks: tuple[int, int, int, int],
         templates: tuple[str, ...],
+        *,
+        unfreeze_blocks: int = 2,
     ) -> None:
         super().__init__()
         if feature_blocks != (2, 5, 8, 11):
             raise ValueError("OpenAI CLIP 必须提取 block [2, 5, 8, 11]")
         if not templates or any(template.count("{}") != 1 for template in templates):
             raise ValueError("每个文本模板必须且只能包含一个 {} 占位符")
+        if not 0 <= unfreeze_blocks <= 12:
+            raise ValueError("unfreeze_blocks 必须位于 [0, 12]")
         visual = getattr(model, "visual", None)
         if not isinstance(visual, nn.Module):
             raise ValueError("OpenAI CLIP 必须公开 visual 模块")
@@ -75,22 +79,24 @@ class OpenAIClipGuidance(nn.Module):
         self._hooks = [
             visual_blocks[index].register_forward_hook(self._capture) for index in feature_blocks
         ]
-        self.configure_partial_finetune()
+        self.configure_partial_finetune(unfreeze_blocks)
 
     def _capture(self, _: nn.Module, __: tuple[Tensor, ...], output: Tensor) -> None:
         if not isinstance(output, Tensor):
             raise ValueError("OpenAI CLIP Transformer block 必须返回 Tensor")
         self._captured.append(output)
 
-    def configure_partial_finetune(self) -> None:
-        """Freeze CLIP then unfreeze only its terminal visual and text components."""
+    def configure_partial_finetune(self, unfreeze_blocks: int) -> None:
+        """Freeze CLIP, optionally unfreezing equal terminal visual and text block counts."""
 
         self.model.requires_grad_(False)
+        if unfreeze_blocks == 0:
+            return
         visual = self.model.visual
         assert isinstance(visual, nn.Module)
-        for block in _resblocks(visual, "视觉塔")[-2:]:
+        for block in _resblocks(visual, "视觉塔")[-unfreeze_blocks:]:
             block.requires_grad_(True)
-        for block in _resblocks(self.model, "文本塔")[-2:]:
+        for block in _resblocks(self.model, "文本塔")[-unfreeze_blocks:]:
             block.requires_grad_(True)
         for name in ("ln_post", "proj"):
             module = getattr(visual, name, None)

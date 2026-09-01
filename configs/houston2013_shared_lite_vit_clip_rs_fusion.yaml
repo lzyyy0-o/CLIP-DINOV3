@@ -26,7 +26,7 @@ data:
 model:
   architecture: clip_guided_shared_lite_vit
   shared_lite_vit: {patch_size: 16, embed_dim: 384, depths: [1, 1, 2, 2], num_heads: 6, mlp_ratio: 2.0}
-  clip: {checkpoint: weights/openai_clip/ViT-B-16.pt, model_name: ViT-B/16, feature_blocks: [2, 5, 8, 11], unfreeze_blocks: 2}
+  clip: {checkpoint: weights/openai_clip/ViT-B-16.pt, model_name: ViT-B/16, feature_blocks: [2, 5, 8, 11], unfreeze_blocks: 0}
   prompt_templates: ["aerial image of {}", "satellite image of {}", "top-down view of {}", "remote sensing image of {}"]
   feature_dim: 512
   text_dim: 512

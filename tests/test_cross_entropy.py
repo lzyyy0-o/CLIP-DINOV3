@@ -33,3 +33,14 @@ def test_masked_cross_entropy_rejects_missing_seen_pixels() -> None:
             torch.full((1, 2, 2), 3),
             torch.ones(1, 2, 2, dtype=torch.bool),
         )
+
+
+def test_masked_cross_entropy_maps_non_contiguous_seen_ids_to_local_logits() -> None:
+    logits = torch.tensor([[[[8.0, -8.0]], [[-8.0, 8.0]]]], requires_grad=True)
+    losses = MaskedCrossEntropyObjective((2, 5))(
+        SimpleNamespace(logits=logits),
+        torch.tensor([[[2, 5]]]),
+        torch.ones(1, 1, 2, dtype=torch.bool),
+    )
+
+    assert losses["total"] < 1e-5

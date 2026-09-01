@@ -36,11 +36,13 @@ class MaskedCrossEntropyObjective(nn.Module):
             or logits.shape[-2:] != labels.shape[-2:]
         ):
             raise ValueError("分割 logits 与标签的批量或空间尺寸不一致")
-        seen_ids = torch.tensor(self.seen_class_ids, device=labels.device, dtype=labels.dtype)
-        supervised_mask = valid_mask & torch.isin(labels, seen_ids)
+        local_targets = torch.full_like(labels, -1)
+        for local_index, class_id in enumerate(self.seen_class_ids):
+            local_targets[labels == class_id] = local_index
+        supervised_mask = valid_mask & (local_targets >= 0)
         if not supervised_mask.any():
             raise ValueError("监督掩码中没有已见类像素")
-        targets = labels[supervised_mask] - 1
+        targets = local_targets[supervised_mask]
         if targets.min() < 0 or targets.max() >= logits.shape[1]:
             raise ValueError("监督标签超出模型类别分数范围")
         pixel_logits = logits.permute(0, 2, 3, 1)[supervised_mask]

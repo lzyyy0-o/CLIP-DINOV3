@@ -303,15 +303,15 @@ class OpenAIClipConfig:
     checkpoint: Path
     model_name: str = "ViT-B/16"
     feature_blocks: tuple[int, int, int, int] = (2, 5, 8, 11)
-    unfreeze_blocks: int = 2
+    unfreeze_blocks: int = 0
 
     def __post_init__(self) -> None:
         if self.model_name != "ViT-B/16":
             raise ConfigError("OpenAI CLIP 必须使用 model_name=ViT-B/16")
         if self.feature_blocks != (2, 5, 8, 11):
             raise ConfigError("OpenAI CLIP 必须使用 feature_blocks=[2, 5, 8, 11]")
-        if self.unfreeze_blocks != 2:
-            raise ConfigError("OpenAI CLIP 必须只解冻末两个 Transformer block")
+        if self.unfreeze_blocks not in {0, 2}:
+            raise ConfigError("OpenAI CLIP 仅支持冻结全部层或解冻末两个 Transformer block")
         if self.checkpoint.suffix.lower() not in {".pt", ".pth"}:
             raise ConfigError("OpenAI CLIP checkpoint 必须为 .pt 或 .pth 文件")
 

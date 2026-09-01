@@ -99,6 +99,20 @@ def test_openai_clip_guidance_preserves_prompt_axis_and_partial_gradients() -> N
     assert clip.transformer.resblocks[10].weight.grad is not None
 
 
+def test_openai_clip_guidance_can_freeze_all_clip_parameters() -> None:
+    clip = _FakeOpenAIClip()
+    guidance = OpenAIClipGuidance(
+        clip,
+        _tokenize,
+        (2, 5, 8, 11),
+        ("aerial image of {}",),
+        unfreeze_blocks=0,
+    )
+
+    assert not any(parameter.requires_grad for parameter in clip.parameters())
+    assert all(parameter.requires_grad for parameter in guidance.projections.parameters())
+
+
 def test_openai_clip_guidance_caches_text_features_only_during_evaluation() -> None:
     clip = _FakeOpenAIClip()
     guidance = OpenAIClipGuidance(

@@ -22,6 +22,7 @@ from torch.utils.data import DataLoader
 
 from hsi_lidar_ovseg.config import (
     ConfigError,
+    DataConfig,
     EncoderConfig,
     ExperimentConfig,
     TrainConfig,
@@ -69,6 +70,7 @@ from hsi_lidar_ovseg.models import (
 )
 from hsi_lidar_ovseg.models.dinov3_bridge import DinoV3InputBridge
 from hsi_lidar_ovseg.models.hypersigma_bridge import HyperSigmaBridge, load_hypersigma_weights
+from hsi_lidar_ovseg.vocabulary import ClassVocabulary
 
 LOGGER = logging.getLogger(__name__)
 
@@ -85,6 +87,18 @@ def deterministic_text_embeddings(class_names: Sequence[str], text_dim: int) -> 
         generator = torch.Generator(device="cpu").manual_seed(seed)
         embeddings.append(torch.randn(text_dim, generator=generator))
     return functional.normalize(torch.stack(embeddings), dim=-1)
+
+
+def _clip_vocabularies(data: DataConfig) -> tuple[ClassVocabulary, ClassVocabulary]:
+    """Build MM-OVSeg-style seen training and complete evaluation vocabularies."""
+
+    train_vocabulary = ClassVocabulary.from_all_class_names(
+        data.class_names, data.seen_class_ids
+    )
+    test_vocabulary = ClassVocabulary.from_all_class_names(
+        data.class_names, tuple(range(1, data.num_classes + 1))
+    )
+    return train_vocabulary, test_vocabulary
 
 
 def _load_local_weights(module: nn.Module, path: Path) -> None:
@@ -276,6 +290,7 @@ def _build_model_and_text(
                     tokenizer,
                     config.model.clip.feature_blocks,
                     config.model.prompt_templates,
+                    unfreeze_blocks=config.model.clip.unfreeze_blocks,
                 ),
                 TextCorrelationDecoder(),
             ),
@@ -432,9 +447,17 @@ def _primitive(value: object) -> Any:
 
 
 def _metrics(
-    config: ExperimentConfig, logits: torch.Tensor, labels: np.ndarray, mask: np.ndarray
+    config: ExperimentConfig,
+    logits: torch.Tensor,
+    labels: np.ndarray,
+    mask: np.ndarray,
+    vocabulary: ClassVocabulary | None = None,
 ) -> dict[str, Any]:
-    predictions = logits.argmax(dim=0).to(torch.int64) + 1
+    predictions = (
+        vocabulary.decode_logits(logits)
+        if vocabulary is not None
+        else logits.argmax(dim=0).to(torch.int64) + 1
+    )
     ground_truth = torch.from_numpy(np.where(mask, labels, 0).astype(np.int64, copy=False))
     metrics = SegmentationMetrics(
         config.data.num_classes,
@@ -483,6 +506,13 @@ def _train_command(args: argparse.Namespace) -> int:
     training_scene, validation_mask = _training_scene(scene, config)
     stats = fit_normalization(training_scene)
     model, text_embeddings = _build_model_and_text(config, scene.hsi.shape[-1])
+    if config.model.architecture == "clip_guided_shared_lite_vit":
+        train_vocabulary, test_vocabulary = _clip_vocabularies(config.data)
+        training_conditioning: torch.Tensor | tuple[str, ...] = train_vocabulary.class_names
+        test_conditioning: torch.Tensor | tuple[str, ...] = test_vocabulary.class_names
+    else:
+        train_vocabulary = test_vocabulary = None
+        training_conditioning = test_conditioning = text_embeddings
     optimizer = _optimizer(model, config)
     objective = (
         MaskedCrossEntropyObjective(config.data.seen_class_ids)
@@ -514,7 +544,7 @@ def _train_command(args: argparse.Namespace) -> int:
         model,
         objective,
         optimizer,
-        text_embeddings,
+        training_conditioning,
         device=device,
         gradient_clip=config.train.gradient_clip,
         amp=config.train.amp,
@@ -553,7 +583,7 @@ def _train_command(args: argparse.Namespace) -> int:
         validation_logits = sliding_window_predict(
             trainer.model,
             training_scene,
-            text_embeddings,
+            training_conditioning,
             config.train.tile_size,
             config.train.overlap,
             device,
@@ -561,7 +591,9 @@ def _train_command(args: argparse.Namespace) -> int:
             terrain_window=config.model.terrain_window,
             stats=stats,
         )
-        validation_metrics = _metrics(config, validation_logits, scene.labels, validation_mask)
+        validation_metrics = _metrics(
+            config, validation_logits, scene.labels, validation_mask, train_vocabulary
+        )
         score = float(validation_metrics["seen_miou"])
         improved = score > best_score + config.train.early_stopping_min_delta
         if improved:
@@ -613,7 +645,7 @@ def _train_command(args: argparse.Namespace) -> int:
     test_logits = sliding_window_predict(
         trainer.model,
         training_scene,
-        text_embeddings,
+        test_conditioning,
         config.train.tile_size,
         config.train.overlap,
         device,
@@ -621,11 +653,14 @@ def _train_command(args: argparse.Namespace) -> int:
         terrain_window=config.model.terrain_window,
         stats=stats,
     )
-    test_metrics = _metrics(config, test_logits, scene.labels, scene.test_mask)
+    test_metrics = _metrics(config, test_logits, scene.labels, scene.test_mask, test_vocabulary)
     (config.output_dir / "test_metrics.json").write_text(
         json.dumps(test_metrics, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     LOGGER.info("最终测试指标: %s", json.dumps(test_metrics, ensure_ascii=False))
+    if test_vocabulary is not None:
+        predictions = test_vocabulary.decode_logits(test_logits)
+        LOGGER.info("最终预测类别像素数: %s", test_vocabulary.prediction_counts(predictions))
     return 0
 
 
@@ -635,6 +670,12 @@ def _evaluate_command(args: argparse.Namespace) -> int:
     scene = load_scene(config.data, split_seed=config.seed)
     training_scene, _ = _training_scene(scene, config)
     model, text_embeddings = _build_model_and_text(config, scene.hsi.shape[-1])
+    if config.model.architecture == "clip_guided_shared_lite_vit":
+        _, test_vocabulary = _clip_vocabularies(config.data)
+        conditioning: torch.Tensor | tuple[str, ...] = test_vocabulary.class_names
+    else:
+        test_vocabulary = None
+        conditioning = text_embeddings
     optimizer = _optimizer(model, config)
     state = load_checkpoint(
         args.checkpoint,
@@ -646,7 +687,7 @@ def _evaluate_command(args: argparse.Namespace) -> int:
     logits = sliding_window_predict(
         model,
         training_scene,
-        text_embeddings,
+        conditioning,
         config.train.tile_size,
         config.train.overlap,
         device,
@@ -654,13 +695,20 @@ def _evaluate_command(args: argparse.Namespace) -> int:
         terrain_window=config.model.terrain_window,
         stats=stats,
     )
-    metrics = _metrics(config, logits, scene.labels, scene.test_mask)
+    metrics = _metrics(config, logits, scene.labels, scene.test_mask, test_vocabulary)
     config.output_dir.mkdir(parents=True, exist_ok=True)
-    np.save(config.output_dir / "predictions.npy", (logits.argmax(dim=0) + 1).numpy())
+    predictions = (
+        test_vocabulary.decode_logits(logits)
+        if test_vocabulary is not None
+        else logits.argmax(dim=0).to(torch.int64) + 1
+    )
+    np.save(config.output_dir / "predictions.npy", predictions.numpy())
     (config.output_dir / "metrics.json").write_text(
         json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     LOGGER.info("评估完成: %s", json.dumps(metrics, ensure_ascii=False))
+    if test_vocabulary is not None:
+        LOGGER.info("预测类别像素数: %s", test_vocabulary.prediction_counts(predictions))
     return 0
 
 
